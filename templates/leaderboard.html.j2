@@ -1,0 +1,310 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{ title }}</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          fontFamily: { sans: ['Inter', 'system-ui', 'sans-serif'] },
+          colors: {
+            slate: { 850: '#1e293b', 900: '#0f172a' },
+            emerald: { 450: '#10b981' },
+          },
+          boxShadow: {
+            'soft': '0 4px 20px -2px rgba(0, 0, 0, 0.08)',
+            'glow': '0 0 40px -10px rgba(99, 102, 241, 0.3)',
+          }
+        }
+      }
+    }
+  </script>
+  <style>
+    .progress-fill { transition: width 0.6s cubic-bezier(0.4, 0, 0.2, 1); }
+    .row-enter { animation: fadeUp 0.4s ease-out; }
+    @keyframes fadeUp {
+      from { opacity: 0; transform: translateY(8px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+    .medal-gold { background: linear-gradient(135deg, #fbbf24, #f59e0b); }
+    .medal-silver { background: linear-gradient(135deg, #e5e7eb, #9ca3af); }
+    .medal-bronze { background: linear-gradient(135deg, #fdba74, #d97706); }
+    .sort-asc::after { content: ' ▲'; }
+    .sort-desc::after { content: ' ▼'; }    .bar-track {
+      position: relative;
+      width: 100px;
+      height: 26px;
+      border-radius: 6px;
+      background: #f1f5f9;
+      overflow: hidden;
+    }
+    .bar-fill {
+      height: 100%;
+      border-radius: 6px;
+      transition: width 0.5s ease;
+    }
+    .bar-label {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      padding: 0 8px;
+      font-size: 12px;
+      font-weight: 600;
+      color: #334155;
+      white-space: nowrap;
+    }
+    .bar-fill.green { background: #34d399; }
+    .bar-fill.blue { background: #60a5fa; }
+    .bar-fill.red { background: #f87171; }
+    .metric-pair {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .metric-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .metric-caption {
+      min-width: 34px;
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: #64748b;
+    }
+    .metric-caption.fail { color: #b91c1c; }
+    .detail-chip.fail {
+      background: #fee2e2;
+      color: #b91c1c;
+    }
+  </style>
+</head>
+<body class="bg-white text-slate-800 antialiased min-h-screen">
+  <main class="max-w-6xl mx-auto px-4 sm:px-6 py-5 pb-14">
+    <div class="mb-4 border-b border-slate-200 pb-3">
+      <h1 class="text-2xl font-semibold tracking-tight text-slate-900">{{ title }}</h1>
+    </div>
+
+    <div class="mb-4 flex items-center gap-3">
+      <div class="relative flex-1 min-w-0">
+        <svg class="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path></svg>
+        <input id="search" type="search" placeholder="Search..." class="w-full rounded-md border border-slate-300 bg-white px-10 py-2 text-sm text-slate-900 outline-none focus:border-slate-400">
+      </div>
+      <div class="text-sm text-slate-500 whitespace-nowrap">Generated from tmp.benchmarks</div>
+    </div>
+
+    <!-- Leaderboard Table -->
+    <div class="overflow-hidden border border-slate-200 bg-white">
+      <div class="overflow-x-auto">
+        <table id="leaderboard" class="w-full text-sm table-fixed">
+          <thead>
+            <tr class="border-b border-slate-200 bg-white">
+              <th class="w-12 px-3 py-3.5"></th>
+              <th class="w-48 px-4 py-3.5 text-left font-semibold text-slate-600 text-sm tracking-wide cursor-pointer" data-type="text">Model</th>
+              <th class="w-32 px-4 py-3.5 text-left font-semibold text-slate-600 text-sm tracking-wide cursor-pointer" data-type="number">Percent correct</th>
+              <th class="w-32 px-4 py-3.5 text-left font-semibold text-slate-600 text-sm tracking-wide cursor-pointer" data-type="number">Cost</th>
+              <th class="w-32 px-4 py-3.5 text-left font-semibold text-slate-600 text-sm tracking-wide cursor-pointer" data-type="number">Solved First Try</th>
+              <th class="w-32 px-4 py-3.5 text-left font-semibold text-slate-600 text-sm tracking-wide cursor-pointer" data-type="number">Solved Second Try</th>
+              <th class="px-4 py-3.5 text-left font-semibold text-slate-600 text-sm tracking-wide cursor-pointer" data-type="text">Command</th>
+              <th class="w-28 px-4 py-3.5 text-left font-semibold text-slate-600 text-sm tracking-wide cursor-pointer" data-type="number">Correct edit format</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in rows %}
+            <tr class="main-row border-b border-slate-100 hover:bg-slate-50 transition group row-enter" style="animation-delay: {{ loop.index0 * 0.05 }}s" data-row-id="row-{{ loop.index0 }}">
+              <td class="px-3 py-4 align-top">
+                <button class="expand-button inline-flex h-5 w-5 items-center justify-center rounded-sm border border-slate-300 bg-white text-slate-500 hover:border-slate-400 hover:text-slate-700 transition" type="button" aria-expanded="false" aria-controls="detail-row-{{ loop.index0 }}" data-toggle-details="row-{{ loop.index0 }}">
+                  <svg class="expand-icon h-3.5 w-3.5 transition-transform" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+                    <path d="M6 4l8 6-8 6V4z"></path>
+                  </svg>
+                </button>
+              </td>
+              <td class="px-4 py-4 align-top" data-sort="{{ row.model }}">
+                <div class="font-semibold text-slate-900 leading-5">{{ row.model }}</div>
+                <div class="text-xs text-slate-500 mt-0.5 truncate max-w-[220px]">{{ row.run_name }}</div>
+              </td>
+              <td class="px-4 py-4 align-top" data-sort="{{ row.percent_correct }}">
+                <div class="bar-track">
+                  <div class="bar-fill green" style="width: {{ row.percent_correct }}%"></div>
+                  <div class="bar-label">{{ '%.1f'|format(row.percent_correct) }}%</div>
+                </div>
+              </td>
+              <td class="px-4 py-4 align-top" data-sort="{{ row.total_cost_sort }}">
+                <div class="bar-track">
+                  <div class="bar-fill blue" style="width: {{ row.total_cost_width }}%"></div>
+                  <div class="bar-label">{{ row.total_cost }}</div>
+                </div>
+              </td>
+              <td class="px-4 py-4 align-top" data-sort="{{ row.pass_first_try }}">
+                <div class="metric-pair">
+                  <div class="metric-row">
+                    <span class="metric-caption">Pass</span>
+                    <div class="bar-track">
+                      <div class="bar-fill green" style="width: {{ row.pass_first_try }}%"></div>
+                      <div class="bar-label">{{ '%.1f'|format(row.pass_first_try) }}%</div>
+                    </div>
+                  </div>
+                  <div class="metric-row">
+                    <span class="metric-caption fail">Fail</span>
+                    <div class="bar-track">
+                      <div class="bar-fill red" style="width: {{ row.failed_rate }}%"></div>
+                      <div class="bar-label">{{ '%.1f'|format(row.failed_rate) }}%</div>
+                    </div>
+                  </div>
+                </div>
+              </td>
+              <td class="px-4 py-4 align-top" data-sort="{{ row.pass_after_retries }}">
+                <div class="metric-pair">
+                  <div class="metric-row">
+                    <span class="metric-caption">Pass</span>
+                    <div class="bar-track">
+                      <div class="bar-fill green" style="width: {{ row.pass_after_retries }}%"></div>
+                      <div class="bar-label">{{ '%.1f'|format(row.pass_after_retries) }}%</div>
+                    </div>
+                  </div>
+                  <div class="metric-row">
+                    <span class="metric-caption fail">Fail</span>
+                    <div class="bar-track">
+                      <div class="bar-fill red" style="width: {{ row.failed_rate }}%"></div>
+                      <div class="bar-label">{{ '%.1f'|format(row.failed_rate) }}%</div>
+                    </div>
+                  </div>
+                </div>
+              </td>
+              <td class="px-4 py-4 align-top" data-sort="{{ row.command }}">
+                <code class="block max-w-[220px] rounded bg-slate-100 px-2 py-1 text-xs text-slate-700 break-words">{{ row.command or '—' }}</code>
+              </td>
+              <td class="px-4 py-4 align-top" data-sort="{{ row.reliable_replies }}">
+                <span class="inline-flex items-center rounded-full px-2.5 py-1 text-xs font-semibold {{ 'bg-emerald-100 text-emerald-700' if row.reliable_replies >= 95 else ('bg-amber-100 text-amber-700' if row.reliable_replies >= 80 else 'bg-rose-100 text-rose-700') }}">{{ '%.1f'|format(row.reliable_replies) }}%</span>
+              </td>
+            </tr>
+            <tr id="detail-row-{{ loop.index0 }}" class="detail-row hidden border-b border-slate-100 bg-slate-50/70" data-row-id="row-{{ loop.index0 }}">
+              <td colspan="7" class="px-6 pb-6 pt-0">
+                <div class="ml-4 rounded border border-slate-200 bg-white px-4 py-4">
+                  <div class="mb-3 flex items-center justify-between gap-3">
+                    <div>
+                      <div class="text-sm font-semibold text-slate-900">{{ row.model }}</div>
+                      <div class="text-xs text-slate-500">{{ row.run_name }}</div>
+                    </div>
+                    <div class="flex items-center gap-2 text-xs text-slate-500">
+                      <span class="rounded-full bg-slate-100 px-2 py-1 font-medium">Solved First Try: {{ '%.1f'|format(row.pass_first_try) }}%</span>
+                      <span class="rounded-full bg-slate-100 px-2 py-1 font-medium">Solved Second Try: {{ '%.1f'|format(row.pass_after_retries) }}%</span>
+                      <span class="detail-chip fail rounded-full px-2 py-1 font-medium">Failed Rate: {{ '%.1f'|format(row.failed_rate) }}%</span>
+                    </div>
+                  </div>
+                  <ul class="grid gap-1 sm:grid-cols-2 xl:grid-cols-3">
+                    {% for detail in row.details %}
+                    <li class="flex items-start gap-2 px-2 py-1 text-sm text-slate-700">
+                      <span class="mt-1 h-1.5 w-1.5 rounded-full bg-slate-300 shrink-0"></span>
+                      <div class="min-w-0">
+                        <span class="font-semibold text-slate-600">{{ detail.label }}:</span>
+                        {% if detail.code %}
+                        <code class="ml-1 break-words rounded bg-slate-100 px-1.5 py-0.5 text-xs text-slate-700">{{ detail.value }}</code>
+                        {% else %}
+                        <span class="ml-1 break-words">{{ detail.value }}</span>
+                        {% endif %}
+                      </div>
+                    </li>
+                    {% endfor %}
+                  </ul>
+                </div>
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="mt-5 text-center text-xs text-slate-400">
+      Generated from benchmark result directories under tmp.benchmarks.
+    </div>
+  </main>
+
+  <script>
+    const search = document.getElementById('search');
+    const table = document.getElementById('leaderboard');
+    const tbody = table.tBodies[0];
+    const mainRows = Array.from(tbody.querySelectorAll('tr.main-row'));
+
+    function getDetailRow(mainRow) {
+      const rowId = mainRow.dataset.rowId;
+      return document.getElementById(`detail-${rowId}`);
+    }
+
+    function setRowExpanded(mainRow, expanded) {
+      const detailRow = getDetailRow(mainRow);
+      const button = mainRow.querySelector('[data-toggle-details]');
+      const icon = button.querySelector('.expand-icon');
+      button.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+      detailRow.classList.toggle('hidden', !expanded);
+      icon.classList.toggle('rotate-90', !expanded);
+      if (expanded) {
+        mainRow.classList.add('bg-indigo-50/20');
+        detailRow.classList.remove('bg-slate-50/70');
+      } else {
+        mainRow.classList.remove('bg-indigo-50/20');
+        detailRow.classList.add('bg-slate-50/70');
+      }
+    }
+
+    search.addEventListener('input', () => {
+      const needle = search.value.trim().toLowerCase();
+      mainRows.forEach((row) => {
+        const detailRow = getDetailRow(row);
+        const match = row.textContent.toLowerCase().includes(needle) || detailRow.textContent.toLowerCase().includes(needle);
+        row.style.display = match ? '' : 'none';
+        detailRow.style.display = match ? '' : 'none';
+        if (!match) {
+          setRowExpanded(row, false);
+        }
+      });
+    });
+
+    let sortCol = -1;
+    let sortDesc = true;
+    Array.from(table.tHead.rows[0].cells).forEach((header, index) => {
+      if (index === 0) return;
+      header.addEventListener('click', () => {
+        Array.from(table.tHead.rows[0].cells).forEach(h => h.classList.remove('sort-asc', 'sort-desc'));
+        if (sortCol === index) {
+          sortDesc = !sortDesc;
+        } else {
+          sortCol = index;
+          sortDesc = header.dataset.type === 'number';
+        }
+        header.classList.add(sortDesc ? 'sort-desc' : 'sort-asc');
+        const sorted = mainRows.slice().sort((left, right) => {
+          const a = left.cells[index].dataset.sort || left.cells[index].textContent;
+          const b = right.cells[index].dataset.sort || right.cells[index].textContent;
+          const type = header.dataset.type;
+          const cmp = type === 'number' ? Number(a) - Number(b) : a.localeCompare(b);
+          return sortDesc ? -cmp : cmp;
+        });
+        sorted.forEach((row) => {
+          tbody.appendChild(row);
+          tbody.appendChild(getDetailRow(row));
+        });
+      });
+    });
+
+    tbody.addEventListener('click', (event) => {
+      const button = event.target.closest('[data-toggle-details]');
+      if (!button) return;
+      const rowId = button.dataset.toggleDetails;
+      const mainRow = document.querySelector(`tr.main-row[data-row-id="${rowId}"]`);
+      const expanded = button.getAttribute('aria-expanded') === 'true';
+      setRowExpanded(mainRow, !expanded);
+    });
+  </script>
+</body>
+</html>

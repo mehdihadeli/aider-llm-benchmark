@@ -1,0 +1,41 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "aider-polyglot-benchmark"
+version = "0.1.0"
+description = "Standalone Aider benchmark harness for Exercism-style coding tasks"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "aider-chat",
+    "gitpython",
+    "importlib-resources",
+    "jinja2",
+    "lox",
+    "pandas",
+    "python-dotenv",
+    "rich",
+    "typer",
+]
+
+[project.scripts]
+benchmark = "aider_polyglot_benchmark.benchmark:run"
+clone-exercism-tracks = "aider_polyglot_benchmark.clone_tracks_cli:run"
+cleanup-exercism-tracks = "aider_polyglot_benchmark.cleanup_tracks_cli:run"
+leaderboard-report = "aider_polyglot_benchmark.leaderboard_report:main"
+
+[dependency-groups]
+dev = [
+    "pytest",
+]
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.uv]
+package = true

@@ -1,0 +1,12 @@
+{
+  "name": "aider-polyglot-benchmark",
+  "private": true,
+  "scripts": {
+    "prepare": "husky",
+    "gitleaks": "bash scripts/gitleaks.sh repo",
+    "gitleaks:staged": "bash scripts/gitleaks.sh staged"
+  },
+  "devDependencies": {
+    "husky": "^9.1.7"
+  }
+}
