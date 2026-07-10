@@ -114,8 +114,8 @@
               <th class="w-32 px-4 py-3.5 text-left font-semibold text-slate-600 text-sm tracking-wide cursor-pointer" data-type="number">Cost</th>
               <th class="w-32 px-4 py-3.5 text-left font-semibold text-slate-600 text-sm tracking-wide cursor-pointer" data-type="number">Solved First Try</th>
               <th class="w-32 px-4 py-3.5 text-left font-semibold text-slate-600 text-sm tracking-wide cursor-pointer" data-type="number">Solved Second Try</th>
+              <th class="w-32 px-4 py-3.5 text-left font-semibold text-slate-600 text-sm tracking-wide cursor-pointer" data-type="number">Failure rate</th>
               <th class="px-4 py-3.5 text-left font-semibold text-slate-600 text-sm tracking-wide cursor-pointer" data-type="text">Command</th>
-              <th class="w-28 px-4 py-3.5 text-left font-semibold text-slate-600 text-sm tracking-wide cursor-pointer" data-type="number">Correct edit format</th>
             </tr>
           </thead>
           <tbody>
@@ -145,50 +145,29 @@
                 </div>
               </td>
               <td class="px-4 py-4 align-top" data-sort="{{ row.pass_first_try }}">
-                <div class="metric-pair">
-                  <div class="metric-row">
-                    <span class="metric-caption">Pass</span>
-                    <div class="bar-track">
-                      <div class="bar-fill green" style="width: {{ row.pass_first_try }}%"></div>
-                      <div class="bar-label">{{ '%.1f'|format(row.pass_first_try) }}%</div>
-                    </div>
-                  </div>
-                  <div class="metric-row">
-                    <span class="metric-caption fail">Fail</span>
-                    <div class="bar-track">
-                      <div class="bar-fill red" style="width: {{ row.failed_rate }}%"></div>
-                      <div class="bar-label">{{ '%.1f'|format(row.failed_rate) }}%</div>
-                    </div>
-                  </div>
+                <div class="bar-track">
+                  <div class="bar-fill green" style="width: {{ row.pass_first_try }}%"></div>
+                  <div class="bar-label">{{ '%.1f'|format(row.pass_first_try) }}%</div>
                 </div>
               </td>
               <td class="px-4 py-4 align-top" data-sort="{{ row.pass_after_retries }}">
-                <div class="metric-pair">
-                  <div class="metric-row">
-                    <span class="metric-caption">Pass</span>
-                    <div class="bar-track">
-                      <div class="bar-fill green" style="width: {{ row.pass_after_retries }}%"></div>
-                      <div class="bar-label">{{ '%.1f'|format(row.pass_after_retries) }}%</div>
-                    </div>
-                  </div>
-                  <div class="metric-row">
-                    <span class="metric-caption fail">Fail</span>
-                    <div class="bar-track">
-                      <div class="bar-fill red" style="width: {{ row.failed_rate }}%"></div>
-                      <div class="bar-label">{{ '%.1f'|format(row.failed_rate) }}%</div>
-                    </div>
-                  </div>
+                <div class="bar-track">
+                  <div class="bar-fill green" style="width: {{ row.pass_after_retries }}%"></div>
+                  <div class="bar-label">{{ '%.1f'|format(row.pass_after_retries) }}%</div>
+                </div>
+              </td>
+              <td class="px-4 py-4 align-top" data-sort="{{ row.failure_rate }}">
+                <div class="bar-track">
+                  <div class="bar-fill red" style="width: {{ row.failure_rate }}%"></div>
+                  <div class="bar-label">{{ '%.1f'|format(row.failure_rate) }}%</div>
                 </div>
               </td>
               <td class="px-4 py-4 align-top" data-sort="{{ row.command }}">
                 <code class="block max-w-[220px] rounded bg-slate-100 px-2 py-1 text-xs text-slate-700 break-words">{{ row.command or '—' }}</code>
               </td>
-              <td class="px-4 py-4 align-top" data-sort="{{ row.reliable_replies }}">
-                <span class="inline-flex items-center rounded-full px-2.5 py-1 text-xs font-semibold {{ 'bg-emerald-100 text-emerald-700' if row.reliable_replies >= 95 else ('bg-amber-100 text-amber-700' if row.reliable_replies >= 80 else 'bg-rose-100 text-rose-700') }}">{{ '%.1f'|format(row.reliable_replies) }}%</span>
-              </td>
             </tr>
             <tr id="detail-row-{{ loop.index0 }}" class="detail-row hidden border-b border-slate-100 bg-slate-50/70" data-row-id="row-{{ loop.index0 }}">
-              <td colspan="7" class="px-6 pb-6 pt-0">
+              <td colspan="8" class="px-6 pb-6 pt-0">
                 <div class="ml-4 rounded border border-slate-200 bg-white px-4 py-4">
                   <div class="mb-3 flex items-center justify-between gap-3">
                     <div>

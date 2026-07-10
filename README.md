@@ -150,6 +150,16 @@ uv sync --python 3.12
 This installs the published `aider-chat` package from PyPI plus the harness dependencies declared
 in [pyproject.toml](pyproject.toml).
 
+Activate the local `.venv` before running `benchmark` directly:
+
+```bash
+source .venv/Scripts/activate
+```
+
+After activation you can use bare entry points such as `benchmark`, `clone-exercism-tracks`,
+`cleanup-exercism-tracks`, and `leaderboard-report`. If the virtual environment is not activated,
+run commands through `uv run` instead.
+
 ### Clone Exercism tracks
 
 Clone only the language tracks you want to benchmark from [github.com/exercism](https://github.com/exercism):
@@ -433,6 +443,13 @@ For GitHub Copilot provider routing through LiteLLM, use model names with the
 GitHub Copilot provider docs:
 
 - [LiteLLM GitHub Copilot provider](https://docs.litellm.ai/docs/providers/github_copilot)
+- [LiteLLM GitHub Copilot provider — device code auth](https://docs.litellm.ai/docs/providers/github_copilot?ref=dsebastien.net)
+
+No API key is required: LiteLLM authenticates to GitHub Copilot through an
+OAuth device-code flow. On first use the CLI prints a device code and asks you
+to open <https://github.com/login/device>, enter the code, and authorize the
+request. After authorization, credentials are cached locally and reused for
+future runs.
 
 ```bash
 uv run benchmark kimi-openai-smoke --model github_copilot/kimi-k2.7-code --model github_copilot/gpt-5.4-mini --model github_copilot/gpt-4.1 --model github_copilot/gpt-5.4 --model github_copilot/claude-sonnet-4.6 --languages csharp --num-tests 1 --threads 1 --unsafe
@@ -569,6 +586,13 @@ Useful flags:
 - `--keywords two-fer` runs only matching exercise names.
 - `--num-tests 5` is good for smoke testing setup and now stages only those selected exercises into `tmp.benchmarks`.
 - `--read-model-settings path/to/settings.yml` loads custom Aider model settings.
+
+During a run, press **Ctrl+C** once to cancel. The harness stops the current
+benchmark gracefully, summarizes completed exercises, and still writes the
+aggregate leaderboard files (`leaderboard.csv`, `leaderboard.html`,
+`polyglot_leaderboard.yml`) so partial results are preserved. When benchmarking
+multiple models in parallel, the cancellation applies to the running models and
+skips any models that have not started yet.
 
 You can run `benchmark --help` or `uv run benchmark --help`. The help output now includes common workflows such as running a benchmark, comparing runs, collecting stats, and purging generated outputs. The most useful arguments are:
 

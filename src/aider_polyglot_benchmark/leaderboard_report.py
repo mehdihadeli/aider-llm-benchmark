@@ -206,6 +206,8 @@ def summarize_dir(dirname, stats_languages=None):
     row["last_pass_rate"] = row.get(f"pass_rate_{last_pass_index}", 0.0)
     row["last_pass_num"] = row.get(f"pass_num_{last_pass_index}", 0)
     row["failed_count"] = failed_num
+    row["failure_rate"] = failed_rate
+    row["failure_num"] = failed_num
     return row
 
 
@@ -491,8 +493,9 @@ def build_display_rows(rows):
                 "exercises_run": int(row.get("test_cases", 0) or 0),
                 "failed": failed_count,
                 "failed_class": "bad" if failed_count else "good",
+                "failure_rate": float(row.get("failed_rate", 0) or 0),
+                "failure_num": int(row.get("failed_num", 0) or 0),
                 "reliable_replies": float(row.get("percent_well_formed", 0) or 0),
-                "correct_edit_format": float(row.get("percent_well_formed", 0) or 0),
                 "avg_time": format_duration(row.get("seconds_per_case", 0)),
                 "avg_time_sort": float(row.get("seconds_per_case", 0) or 0),
                 "cost": format_money(row.get("cost_per_case", 0)),

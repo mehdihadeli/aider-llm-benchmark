@@ -1,0 +1,17 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "Regenerate leaderboard",
+			"type": "shell",
+			"command": "uv run python -m aider_polyglot_benchmark.benchmark --report",
+			"group": "build"
+		},
+		{
+			"label": "Regenerate leaderboard",
+			"type": "shell",
+			"command": "uv run python -m aider_polyglot_benchmark.benchmark --report",
+			"group": "build"
+		}
+	]
+}

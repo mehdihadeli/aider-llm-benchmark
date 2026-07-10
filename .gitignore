@@ -689,3 +689,4 @@ FodyWeavers.xsd
 tmp.benchmarks
 plan.md
 graphify-out
+.codebase-memory/

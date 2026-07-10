@@ -30,6 +30,7 @@ _RATE_LIMIT_PATTERNS = (
 )
 _RATE_LIMITERS = {}
 _RATE_LIMITERS_LOCK = threading.Lock()
+_CANCEL_EVENT = threading.Event()
 
 
 def find_local_venv_python(repo_root=REPO_ROOT):
@@ -69,10 +70,9 @@ def maybe_reexec_in_local_venv():
 try:
     import git
     import importlib_resources
-    import lox
     import pandas as pd
     import typer
-    from aider_polyglot_benchmark import prompts
+    from aider_polyglot_benchmark import leaderboard_report, prompts
     from dotenv import load_dotenv
     from rich.console import Console
 
@@ -244,6 +244,13 @@ def write_benchmark_report(dirname, report):
         lines.append(f"  {key}: {yaml_scalar(value)}")
     report_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return report_path
+
+
+def write_aggregate_reports_for_progress(dirname):
+    try:
+        write_aggregate_reports([dirname])
+    except Exception as exc:
+        print(f"Warning: failed to update aggregate reports: {exc}")
 
 
 def safe_console_rule(console, title=None):
@@ -811,62 +818,90 @@ def run_benchmark_for_model(
     base_coder.RETRY_TIMEOUT = LONG_TIMEOUT
     models.RETRY_TIMEOUT = LONG_TIMEOUT
 
-    if threads == 1:
-        all_results = []
-        for test_path in test_dnames:
-            results = run_test(
-                original_dname,
-                dirname / test_path,
-                model,
-                edit_format,
-                tries,
-                no_unit_tests,
-                no_aider,
-                verbose,
-                commit_hash,
-                replay,
-                editor_model,
-                editor_edit_format,
-                num_ctx,
-                sleep,
-                reasoning_effort,
-                thinking_tokens,
-                max_llm_concurrency,
-                rate_limit_retries,
-                rate_limit_backoff_initial,
-                rate_limit_backoff_max,
-            )
+    try:
+        if threads == 1:
+            all_results = []
+            for test_path in test_dnames:
+                if _CANCEL_EVENT.is_set():
+                    break
+                results = run_test(
+                    original_dname,
+                    dirname / test_path,
+                    model,
+                    edit_format,
+                    tries,
+                    no_unit_tests,
+                    no_aider,
+                    verbose,
+                    commit_hash,
+                    replay,
+                    editor_model,
+                    editor_edit_format,
+                    num_ctx,
+                    sleep,
+                    reasoning_effort,
+                    thinking_tokens,
+                    max_llm_concurrency,
+                    rate_limit_retries,
+                    rate_limit_backoff_initial,
+                    rate_limit_backoff_max,
+                )
 
-            all_results.append(results)
-            summarize_results(dirname)
-            if sleep:
-                time.sleep(sleep)
-    else:
-        run_test_threaded = lox.thread(threads)(run_test)
-        for test_path in test_dnames:
-            run_test_threaded.scatter(
-                original_dname,
-                dirname / test_path,
-                model,
-                edit_format,
-                tries,
-                no_unit_tests,
-                no_aider,
-                verbose,
-                commit_hash,
-                replay,
-                editor_model,
-                editor_edit_format,
-                num_ctx,
-                sleep,
-                reasoning_effort,
-                thinking_tokens,
-                max_llm_concurrency,
-                rate_limit_retries,
-                rate_limit_backoff_initial,
-                rate_limit_backoff_max,
-            )
-        all_results = run_test_threaded.gather(tqdm=True)
+                all_results.append(results)
+                summarize_results(dirname)
+                write_aggregate_reports_for_progress(dirname)
+                if sleep:
+                    time.sleep(sleep)
+        else:
+            all_results = []
+            with ThreadPoolExecutor(max_workers=threads) as executor:
+                futures = []
+                for test_path in test_dnames:
+                    if _CANCEL_EVENT.is_set():
+                        break
+                    future = executor.submit(
+                        run_test,
+                        original_dname,
+                        dirname / test_path,
+                        model,
+                        edit_format,
+                        tries,
+                        no_unit_tests,
+                        no_aider,
+                        verbose,
+                        commit_hash,
+                        replay,
+                        editor_model,
+                        editor_edit_format,
+                        num_ctx,
+                        sleep,
+                        reasoning_effort,
+                        thinking_tokens,
+                        max_llm_concurrency,
+                        rate_limit_retries,
+                        rate_limit_backoff_initial,
+                        rate_limit_backoff_max,
+                    )
+                    futures.append(future)
+
+                for future in futures:
+                    if _CANCEL_EVENT.is_set():
+                        for pending in futures:
+                            pending.cancel()
+                        break
+                    try:
+                        result = future.result()
+                        all_results.append(result)
+                        summarize_results(dirname)
+                        write_aggregate_reports_for_progress(dirname)
+                    except Exception:
+                        traceback.print_exc()
+    except KeyboardInterrupt:
+        print("\n\nBenchmark cancelled for", model)
+        _CANCEL_EVENT.set()
+        print("\n\n")
+        summarize_results(dirname)
+        return 2
 
     print()
     print()
@@ -1060,80 +1095,98 @@ def main(
     max_model_parallelism = resolve_model_parallelism(model_names, model_parallelism)
     model_runs = list(zip(model_names, run_dirnames))
 
-    if max_model_parallelism == 1 or len(model_runs) == 1:
-        for model_name, run_dirname in model_runs:
-            status = run_single_model_benchmark(
-            model_name,
-            run_dirname,
-            sleep,
-            languages,
-            edit_format,
-            editor_model,
-            editor_edit_format,
-            replay,
-            keywords,
-            clean,
-            no_unit_tests,
-            no_aider,
-            verbose,
-            tries,
-            threads,
-            num_tests,
-            num_ctx,
-            read_model_settings,
-            reasoning_effort,
-            thinking_tokens,
-            llm_concurrency,
-            rate_limit_retries,
-            rate_limit_backoff_initial,
-            rate_limit_backoff_max,
-            exercises_dir,
-            commit_hash,
-        )
-            if status:
-                return status
-    else:
-        with ThreadPoolExecutor(max_workers=min(max_model_parallelism, len(model_runs))) as executor:
-            futures = [
-                executor.submit(
-                    run_single_model_benchmark,
-                    model_name,
-                    run_dirname,
-                    sleep,
-                    languages,
-                    edit_format,
-                    editor_model,
-                    editor_edit_format,
-                    replay,
-                    keywords,
-                    clean,
-                    no_unit_tests,
-                    no_aider,
-                    verbose,
-                    tries,
-                    threads,
-                    num_tests,
-                    num_ctx,
-                    read_model_settings,
-                    reasoning_effort,
-                    thinking_tokens,
-                    llm_concurrency,
-                    rate_limit_retries,
-                    rate_limit_backoff_initial,
-                    rate_limit_backoff_max,
-                    exercises_dir,
-                    commit_hash,
-                )
-                for model_name, run_dirname in model_runs
-            ]
-
-            for future in futures:
-                status = future.result()
-                if status:
+    cancelled_models = set()
+    try:
+        if max_model_parallelism == 1 or len(model_runs) == 1:
+            for model_name, run_dirname in model_runs:
+                if _CANCEL_EVENT.is_set():
+                    cancelled_models.add(model_name)
+                    continue
+                status = run_single_model_benchmark(
+                model_name,
+                run_dirname,
+                sleep,
+                languages,
+                edit_format,
+                editor_model,
+                editor_edit_format,
+                replay,
+                keywords,
+                clean,
+                no_unit_tests,
+                no_aider,
+                verbose,
+                tries,
+                threads,
+                num_tests,
+                num_ctx,
+                read_model_settings,
+                reasoning_effort,
+                thinking_tokens,
+                llm_concurrency,
+                rate_limit_retries,
+                rate_limit_backoff_initial,
+                rate_limit_backoff_max,
+                exercises_dir,
+                commit_hash,
+            )
+                if status == 2:
+                    cancelled_models.add(model_name)
+                elif status:
                     return status
+        else:
+            with ThreadPoolExecutor(max_workers=min(max_model_parallelism, len(model_runs))) as executor:
+                futures = {
+                    executor.submit(
+                        run_single_model_benchmark,
+                        model_name,
+                        run_dirname,
+                        sleep,
+                        languages,
+                        edit_format,
+                        editor_model,
+                        editor_edit_format,
+                        replay,
+                        keywords,
+                        clean,
+                        no_unit_tests,
+                        no_aider,
+                        verbose,
+                        tries,
+                        threads,
+                        num_tests,
+                        num_ctx,
+                        read_model_settings,
+                        reasoning_effort,
+                        thinking_tokens,
+                        llm_concurrency,
+                        rate_limit_retries,
+                        rate_limit_backoff_initial,
+                    rate_limit_backoff_max,
+                        exercises_dir,
+                        commit_hash,
+                    ): model_name
+                    for model_name, run_dirname in model_runs
+                }
 
+                for future in futures:
+                    if _CANCEL_EVENT.is_set():
+                        cancelled_models.add(futures[future])
+                        continue
+                    status = future.result()
+                    if status == 2:
+                        cancelled_models.add(futures[future])
+                    elif status:
+                        return status
+    except KeyboardInterrupt:
+        print("\n\nBenchmark cancelled.")
+        _CANCEL_EVENT.set()
+
+    if cancelled_models:
+        print(f"Cancelled models: {', '.join(sorted(cancelled_models))}")
+    print("Writing aggregate reports for completed models...")
     write_aggregate_reports(run_dirnames, stats_languages=languages)
-    return 0
+    return 0 if not cancelled_models else 2
 
 
 def show_diffs(dirnames):
