@@ -281,6 +281,114 @@ def load_benchmark_report(dirname):
     return report
 
 
+def load_leaderboard_yaml(yaml_path):
+    entries = []
+    current = None
+
+    for raw_line in yaml_path.read_text(encoding="utf-8").splitlines():
+        if not raw_line.strip():
+            continue
+
+        if raw_line.startswith("- "):
+            if current:
+                entries.append(current)
+            current = {}
+            line = raw_line[2:]
+        else:
+            if current is None:
+                continue
+            line = raw_line.strip()
+
+        if ":" not in line:
+            continue
+
+        key, value = line.split(":", 1)
+        current[key.strip()] = parse_yaml_scalar(value)
+
+    if current:
+        entries.append(current)
+
+    return entries
+
+
+def row_from_yaml_entry(entry):
+    pass_rate_1 = float(entry.get("pass_rate_1", 0) or 0)
+    pass_num_1 = int(entry.get("pass_num_1", 0) or 0)
+    indices = sorted(
+        {
+            int(key.split("_")[-1])
+            for key in entry
+            if key.startswith("pass_rate_") or key.startswith("pass_num_")
+        }
+    )
+    last_pass_index = max(indices, default=1)
+    test_cases = int(entry.get("test_cases", entry.get("total_tests", 0)) or 0)
+    solved_total = sum(int(entry.get(f"pass_num_{index}", 0) or 0) for index in indices)
+    if solved_total and test_cases:
+        percent_correct = (solved_total / test_cases) * 100.0
+    else:
+        percent_correct = sum(float(entry.get(f"pass_rate_{index}", 0) or 0) for index in indices)
+    total_tests = int(entry.get("total_tests", test_cases) or test_cases)
+    failed_num = int(entry.get("failed_num", entry.get("failure_num", 0)) or 0)
+    failed_rate = float(entry.get("failed_rate", entry.get("failure_rate", 0)) or 0)
+    percent_well_formed = float(
+        entry.get("percent_well_formed", entry.get("percent_cases_well_formed", 0)) or 0
+    )
+
+    row = {
+        "dirname": str(entry.get("dirname", "") or ""),
+        "date": str(entry.get("date", "") or ""),
+        "completed_tests": test_cases,
+        "test_cases": test_cases,
+        "total_tests": total_tests,
+        "is_complete": test_cases == total_tests,
+        "model": str(entry.get("model", "") or ""),
+        "edit_format": str(entry.get("edit_format", "") or ""),
+        "command": str(entry.get("command", "") or ""),
+        "commit_hash": str(entry.get("commit_hash", "") or ""),
+        "editor_model": str(entry.get("editor_model", "") or ""),
+        "editor_edit_format": str(entry.get("editor_edit_format", "") or ""),
+        "reasoning_effort": str(entry.get("reasoning_effort", "") or ""),
+        "thinking_tokens": str(entry.get("thinking_tokens", "") or ""),
+        "pass_percent": min(percent_correct, 100.0),
+        "percent_well_formed": percent_well_formed,
+        "failed_num": failed_num,
+        "failed_rate": failed_rate,
+        "error_outputs": int(entry.get("error_outputs", 0) or 0),
+        "num_malformed_responses": int(entry.get("num_malformed_responses", 0) or 0),
+        "num_with_malformed_responses": int(entry.get("num_with_malformed_responses", 0) or 0),
+        "user_asks": int(entry.get("user_asks", 0) or 0),
+        "lazy_comments": int(entry.get("lazy_comments", 0) or 0),
+        "syntax_errors": int(entry.get("syntax_errors", 0) or 0),
+        "indentation_errors": int(entry.get("indentation_errors", 0) or 0),
+        "exhausted_context_windows": int(entry.get("exhausted_context_windows", 0) or 0),
+        "total_cost": float(entry.get("total_cost", 0) or 0),
+        "cost_per_case": float(entry.get("total_cost", 0) or 0) / test_cases if test_cases else 0.0,
+        "seconds_per_case": float(entry.get("seconds_per_case", 0) or 0),
+        "prompt_tokens": int(entry.get("prompt_tokens", 0) or 0),
+        "completion_tokens": int(entry.get("completion_tokens", 0) or 0),
+        "test_timeouts": int(entry.get("test_timeouts", 0) or 0),
+        "versions": str(entry.get("versions", "") or ""),
+        "last_pass_index": last_pass_index,
+        "last_pass_rate": float(entry.get(f"pass_rate_{last_pass_index}", 0) or 0),
+        "last_pass_num": int(entry.get(f"pass_num_{last_pass_index}", 0) or 0),
+        "failed_count": failed_num,
+        "failure_rate": failed_rate,
+        "failure_num": failed_num,
+    }
+
+    for index in indices:
+        row[f"pass_rate_{index}"] = float(entry.get(f"pass_rate_{index}", 0) or 0)
+        row[f"pass_num_{index}"] = int(entry.get(f"pass_num_{index}", 0) or 0)
+
+    if "pass_rate_1" not in row:
+        row["pass_rate_1"] = pass_rate_1
+    if "pass_num_1" not in row:
+        row["pass_num_1"] = pass_num_1
+
+    return row
+
+
 def build_yaml_entries(directories, stats_languages=None, complete_only=False):
     entries = []
     for dirname in directories:
@@ -463,12 +571,30 @@ def build_detail_payload(row):
             {"label": "Completion tokens", "value": str(row.get("completion_tokens", 0) or 0)},
             {"label": "Test timeouts", "value": str(row.get("test_timeouts", 0) or 0)},
             {"label": "Total tests", "value": str(row.get("total_tests", 0) or 0)},
-            {"label": "Command", "value": row.get("command") or "", "code": True},
             {"label": "Date", "value": str(row.get("date", ""))},
             {"label": "Versions", "value": str(row.get("versions") or "")},
             {"label": "Seconds per case", "value": f"{float(row.get('seconds_per_case', 0) or 0):.1f}"},
             {"label": "Total cost", "value": f"{float(row.get('total_cost', 0) or 0):.4f}"},
         ],
+    }
+
+
+def build_summary(rows):
+    total_models = len(rows)
+    total_test_cases = sum(int(row.get("test_cases", 0) or 0) for row in rows)
+    use_cases_per_model = (total_test_cases / total_models) if total_models else 0.0
+    avg_percent_correct = (
+        sum(float(row.get("pass_percent", 0) or 0) for row in rows) / total_models if total_models else 0.0
+    )
+    avg_failure_rate = (
+        sum(float(row.get("failed_rate", 0) or 0) for row in rows) / total_models if total_models else 0.0
+    )
+    return {
+        "total_models": total_models,
+        "total_test_cases": total_test_cases,
+        "use_cases_per_model": use_cases_per_model,
+        "avg_percent_correct": avg_percent_correct,
+        "avg_failure_rate": avg_failure_rate,
     }
 
 
@@ -544,6 +670,7 @@ def render_html(rows, output_path, title):
         title=title,
         rows=build_display_rows(rows),
         row_count=len(rows),
+        summary=build_summary(rows),
     )
     output_path.write_text(html_doc, encoding="utf-8")
 
@@ -578,8 +705,12 @@ def parse_args():
         help="YAML output path",
     )
     parser.add_argument(
+        "--from-yaml",
+        help="Render outputs from an existing leaderboard YAML file instead of rebuilding from benchmark directories",
+    )
+    parser.add_argument(
         "--title",
-        default="LLMs BenchmarkLLM Leaderboards",
+        default="LLM Coding Benchmark",
         help="HTML page title",
     )
     return parser.parse_args()
@@ -587,12 +718,18 @@ def parse_args():
 
 def main():
     args = parse_args()
-    directories = find_benchmark_dirs(args.dirs)
-    rows = build_rows(
-        directories,
-        stats_languages=args.stats_languages,
-        complete_only=args.complete_only,
-    )
+    yaml_entries = None
+    if args.from_yaml:
+        yaml_path = Path(args.from_yaml)
+        yaml_entries = load_leaderboard_yaml(yaml_path)
+        rows = [row_from_yaml_entry(entry) for entry in yaml_entries]
+    else:
+        directories = find_benchmark_dirs(args.dirs)
+        rows = build_rows(
+            directories,
+            stats_languages=args.stats_languages,
+            complete_only=args.complete_only,
+        )
 
     if not rows:
         raise SystemExit("No benchmark results found to export.")
@@ -600,11 +737,12 @@ def main():
     csv_path = Path(args.csv)
     html_path = Path(args.html)
     yaml_path = Path(args.yaml)
-    yaml_entries = build_yaml_entries(
-        directories,
-        stats_languages=args.stats_languages,
-        complete_only=args.complete_only,
-    )
+    if yaml_entries is None:
+        yaml_entries = build_yaml_entries(
+            directories,
+            stats_languages=args.stats_languages,
+            complete_only=args.complete_only,
+        )
     write_csv(rows, csv_path)
     render_html(rows, html_path, args.title)
     write_yaml(yaml_entries, yaml_path)

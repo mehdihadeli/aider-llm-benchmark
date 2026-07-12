@@ -4,28 +4,202 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{{ title }}</title>
-  <script src="https://cdn.tailwindcss.com"></script>
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
-  <script>
-    tailwind.config = {
-      theme: {
-        extend: {
-          fontFamily: { sans: ['Inter', 'system-ui', 'sans-serif'] },
-          colors: {
-            slate: { 850: '#1e293b', 900: '#0f172a' },
-            emerald: { 450: '#10b981' },
-          },
-          boxShadow: {
-            'soft': '0 4px 20px -2px rgba(0, 0, 0, 0.08)',
-            'glow': '0 0 40px -10px rgba(99, 102, 241, 0.3)',
-          }
-        }
-      }
-    }
-  </script>
   <style>
+    :root {
+      --bg: #ffffff;
+      --bg-soft: #f8fafc;
+      --border: #e2e8f0;
+      --border-soft: #f1f5f9;
+      --text: #1e293b;
+      --text-strong: #0f172a;
+      --text-muted: #64748b;
+      --green: #34d399;
+      --blue: #60a5fa;
+      --red: #f87171;
+      --green-soft: #dcefdc;
+      --blue-soft: #d8e5ff;
+      --red-soft-bg: #ffe1e1;
+      --red-soft: #fee2e2;
+      --red-strong: #b91c1c;
+      --highlight: rgba(99, 102, 241, 0.08);
+      --tick: rgba(100, 116, 139, 0.35);
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background: var(--bg);
+      color: var(--text);
+      font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+      -webkit-font-smoothing: antialiased;
+    }
+    main {
+      max-width: 96rem;
+      margin: 0 auto;
+      padding: 1.25rem 0.75rem 3.5rem;
+    }
+    @media (min-width: 640px) {
+      main { padding-left: 1rem; padding-right: 1rem; }
+    }
+    .page-header {
+      margin-bottom: 1rem;
+      border-bottom: 1px solid var(--border);
+      padding-bottom: 0.75rem;
+    }
+    .page-title {
+      margin: 0;
+      font-size: 1.5rem;
+      font-weight: 600;
+      letter-spacing: -0.025em;
+      color: var(--text-strong);
+    }
+    .toolbar {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      margin-bottom: 1rem;
+    }
+    .search-wrap {
+      position: relative;
+      flex: 1 1 0%;
+      min-width: 0;
+    }
+    .search-icon {
+      position: absolute;
+      left: 0.75rem;
+      top: 50%;
+      width: 1rem;
+      height: 1rem;
+      transform: translateY(-50%);
+      color: #94a3b8;
+    }
+    .search-input {
+      width: 100%;
+      border: 1px solid #cbd5e1;
+      background: var(--bg);
+      color: var(--text-strong);
+      border-radius: 0.375rem;
+      padding: 0.5rem 0.75rem 0.5rem 2.5rem;
+      font-size: 0.875rem;
+      outline: none;
+    }
+    .search-input:focus { border-color: #94a3b8; }
+    .toolbar-note {
+      white-space: nowrap;
+      color: var(--text-muted);
+      font-size: 0.875rem;
+    }
+    .summary-grid {
+      display: grid;
+      gap: 0.75rem;
+      margin-bottom: 1rem;
+      grid-template-columns: repeat(1, minmax(0, 1fr));
+    }
+    @media (min-width: 640px) {
+      .summary-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    }
+    @media (min-width: 1280px) {
+      .summary-grid { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+    }
+    .summary-card {
+      border: 1px solid var(--border);
+      background: var(--bg-soft);
+      border-radius: 0.25rem;
+      padding: 0.75rem 1rem;
+    }
+    .summary-label {
+      color: var(--text-muted);
+      font-size: 0.75rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+    .summary-value {
+      margin-top: 0.25rem;
+      color: var(--text-strong);
+      font-size: 1.5rem;
+      font-weight: 600;
+    }
+    .table-shell {
+      overflow: hidden;
+      border: 1px solid var(--border);
+      background: var(--bg);
+    }
+    .table-scroll { overflow-x: auto; }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      table-layout: fixed;
+      font-size: 0.875rem;
+    }
+    th, td { vertical-align: top; }
+    thead tr {
+      border-bottom: 1px solid var(--border);
+      background: var(--bg);
+    }
+    th {
+      padding: 0.875rem 1rem;
+      text-align: left;
+      font-weight: 600;
+      font-size: 0.875rem;
+      letter-spacing: 0.01em;
+      color: var(--text-muted);
+      cursor: pointer;
+    }
+    td { padding: 1rem; }
+    .main-row {
+      border-bottom: 1px solid var(--border-soft);
+      transition: background-color 0.2s ease;
+    }
+    .main-row:hover { background: #f8fafc; }
+    .detail-row {
+      border-bottom: 1px solid var(--border-soft);
+      background: rgba(248, 250, 252, 0.7);
+    }
+    .hidden { display: none; }
+    .expand-cell {
+      width: 3rem;
+      padding-left: 0.75rem;
+      padding-right: 0.75rem;
+    }
+    .model-cell { width: 12rem; }
+    .metric-cell { width: 8rem; }
+    .expand-button {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 1.25rem;
+      height: 1.25rem;
+      border: 1px solid #cbd5e1;
+      border-radius: 0.125rem;
+      background: var(--bg);
+      color: var(--text-muted);
+      transition: border-color 0.2s ease, color 0.2s ease;
+    }
+    .expand-button:hover {
+      border-color: #94a3b8;
+      color: var(--text);
+    }
+    .expand-icon {
+      width: 0.875rem;
+      height: 0.875rem;
+      transition: transform 0.2s ease;
+    }
+    .rotate-90 { transform: rotate(90deg); }
+    .model-name {
+      color: var(--text-strong);
+      font-weight: 600;
+      line-height: 1.25rem;
+    }
+    .run-name {
+      margin-top: 0.125rem;
+      max-width: 220px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      color: var(--text-muted);
+      font-size: 0.75rem;
+    }
     .progress-fill { transition: width 0.6s cubic-bezier(0.4, 0, 0.2, 1); }
     .row-enter { animation: fadeUp 0.4s ease-out; }
     @keyframes fadeUp {
@@ -36,33 +210,64 @@
     .medal-silver { background: linear-gradient(135deg, #e5e7eb, #9ca3af); }
     .medal-bronze { background: linear-gradient(135deg, #fdba74, #d97706); }
     .sort-asc::after { content: ' ▲'; }
-    .sort-desc::after { content: ' ▼'; }    .bar-track {
+    .sort-desc::after { content: ' ▼'; }
+    .bar-track {
       position: relative;
-      width: 100px;
-      height: 26px;
-      border-radius: 6px;
-      background: #f1f5f9;
+      width: 100%;
+      min-width: 160px;
+      height: 34px;
+      border-radius: 0;
       overflow: hidden;
     }
+    .bar-track::before {
+      content: "";
+      position: absolute;
+      left: 0;
+      right: 0;
+      top: 50%;
+      height: 10px;
+      transform: translateY(-50%);
+      background:
+        repeating-linear-gradient(
+          to right,
+          transparent 0,
+          transparent 9px,
+          var(--tick) 9px,
+          var(--tick) 10px
+        );
+      pointer-events: none;
+    }
     .bar-fill {
+      position: relative;
+      z-index: 1;
       height: 100%;
-      border-radius: 6px;
+      border-radius: 0;
       transition: width 0.5s ease;
+      opacity: 0.9;
     }
     .bar-label {
       position: absolute;
-      inset: 0;
+      z-index: 2;
+      left: 8px;
+      top: 50%;
+      transform: translateY(-50%);
       display: flex;
       align-items: center;
-      padding: 0 8px;
+      padding: 0.2rem 0.45rem;
       font-size: 12px;
-      font-weight: 600;
-      color: #334155;
+      font-weight: 500;
+      color: #475569;
       white-space: nowrap;
+      background: rgba(255, 255, 255, 0.72);
+      border-radius: 3px;
+      backdrop-filter: blur(1px);
     }
-    .bar-fill.green { background: #34d399; }
-    .bar-fill.blue { background: #60a5fa; }
-    .bar-fill.red { background: #f87171; }
+    .bar-fill.green { background: #b8deb8; }
+    .bar-fill.blue { background: #b8cdfc; }
+    .bar-fill.red { background: #f6b1b1; }
+    .bar-fill.green + .bar-label { background: var(--green-soft); }
+    .bar-fill.blue + .bar-label { background: var(--blue-soft); }
+    .bar-fill.red + .bar-label { background: var(--red-soft-bg); }
     .metric-pair {
       display: flex;
       flex-direction: column;
@@ -83,118 +288,387 @@
     }
     .metric-caption.fail { color: #b91c1c; }
     .detail-chip.fail {
-      background: #fee2e2;
-      color: #b91c1c;
+      background: var(--red-soft);
+      color: var(--red-strong);
+    }
+    .detail-panel {
+      margin-left: 1rem;
+      border: 1px solid var(--border);
+      border-radius: 0.25rem;
+      background: var(--bg);
+      padding: 1.25rem;
+    }
+    .detail-header {
+      margin-bottom: 1rem;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 1rem;
+    }
+    .detail-title {
+      color: var(--text-strong);
+      font-size: 1rem;
+      font-weight: 700;
+    }
+    .detail-subtitle {
+      color: var(--text-muted);
+      font-size: 0.75rem;
+      margin-top: 0.25rem;
+    }
+    .detail-badges {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      color: var(--text-muted);
+      font-size: 0.75rem;
+    }
+    .badge {
+      border-radius: 9999px;
+      background: #f1f5f9;
+      padding: 0.35rem 0.7rem;
+      font-weight: 600;
+    }
+    .detail-overview {
+      display: grid;
+      gap: 0.75rem;
+      margin-bottom: 1rem;
+      grid-template-columns: repeat(1, minmax(0, 1fr));
+    }
+    @media (min-width: 640px) {
+      .detail-overview { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+    }
+    .overview-card {
+      border: 1px solid var(--border);
+      background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
+      border-radius: 0.5rem;
+      padding: 0.85rem 0.95rem;
+      min-width: 0;
+    }
+    .overview-label {
+      color: var(--text-muted);
+      font-size: 0.7rem;
+      font-weight: 700;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+    }
+    .overview-value {
+      margin-top: 0.35rem;
+      color: var(--text-strong);
+      font-size: 1.25rem;
+      font-weight: 700;
+      line-height: 1.1;
+    }
+    .overview-subvalue {
+      margin-top: 0.2rem;
+      color: var(--text-muted);
+      font-size: 0.75rem;
+    }
+    .detail-sections {
+      display: grid;
+      gap: 1rem;
+      grid-template-columns: repeat(1, minmax(0, 1fr));
+    }
+    @media (min-width: 980px) {
+      .detail-sections { grid-template-columns: 1.2fr 1fr; }
+    }
+    .detail-section {
+      border: 1px solid var(--border);
+      border-radius: 0.5rem;
+      background: #fbfdff;
+      padding: 1rem;
+      min-width: 0;
+    }
+    .detail-section-title {
+      margin: 0 0 0.8rem;
+      color: var(--text-strong);
+      font-size: 0.8rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+    .detail-stats-grid {
+      display: grid;
+      gap: 0.75rem;
+      grid-template-columns: repeat(1, minmax(0, 1fr));
+    }
+    @media (min-width: 640px) {
+      .detail-stats-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    }
+    .detail-stat {
+      border: 1px solid var(--border-soft);
+      border-radius: 0.45rem;
+      background: #ffffff;
+      padding: 0.75rem 0.85rem;
+    }
+    .detail-stat-label {
+      color: var(--text-muted);
+      font-size: 0.72rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+    .detail-stat-value {
+      margin-top: 0.35rem;
+      color: var(--text-strong);
+      font-size: 1rem;
+      font-weight: 700;
+      word-break: break-word;
+    }
+    .detail-list {
+      display: grid;
+      gap: 0.5rem;
+      list-style: none;
+      padding: 0;
+      margin: 0;
+      grid-template-columns: repeat(1, minmax(0, 1fr));
+    }
+    @media (min-width: 640px) {
+      .detail-list { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    }
+    @media (min-width: 1280px) {
+      .detail-list { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    }
+    .detail-item {
+      display: flex;
+      align-items: flex-start;
+      gap: 0.5rem;
+      padding: 0.55rem 0.65rem;
+      color: var(--text);
+      font-size: 0.875rem;
+      border: 1px solid var(--border-soft);
+      border-radius: 0.45rem;
+      background: #ffffff;
+    }
+    .detail-dot {
+      margin-top: 0.375rem;
+      width: 0.375rem;
+      height: 0.375rem;
+      border-radius: 9999px;
+      background: #cbd5e1;
+      flex-shrink: 0;
+    }
+    .detail-text { min-width: 0; }
+    .detail-label {
+      color: var(--text-muted);
+      font-weight: 600;
+    }
+    .detail-value {
+      margin-left: 0.25rem;
+      word-break: break-word;
+    }
+    .footer-note {
+      margin-top: 1.25rem;
+      text-align: center;
+      font-size: 0.75rem;
+      color: #94a3b8;
+    }
+    .table-scroll td:nth-child(3),
+    .table-scroll td:nth-child(4),
+    .table-scroll td:nth-child(5),
+    .table-scroll td:nth-child(6),
+    .table-scroll td:nth-child(7) {
+      padding-top: 1.15rem;
+      padding-bottom: 1.15rem;
+    }
+    @media (max-width: 767px) {
+      .detail-header,
+      .toolbar {
+        flex-direction: column;
+        align-items: stretch;
+      }
+      .detail-badges {
+        flex-wrap: wrap;
+      }
+      .toolbar-note {
+        white-space: normal;
+      }
     }
   </style>
 </head>
-<body class="bg-white text-slate-800 antialiased min-h-screen">
-  <main class="max-w-6xl mx-auto px-4 sm:px-6 py-5 pb-14">
-    <div class="mb-4 border-b border-slate-200 pb-3">
-      <h1 class="text-2xl font-semibold tracking-tight text-slate-900">{{ title }}</h1>
+<body>
+  <main>
+    <div class="page-header">
+      <h1 class="page-title">{{ title }}</h1>
     </div>
 
-    <div class="mb-4 flex items-center gap-3">
-      <div class="relative flex-1 min-w-0">
-        <svg class="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path></svg>
-        <input id="search" type="search" placeholder="Search..." class="w-full rounded-md border border-slate-300 bg-white px-10 py-2 text-sm text-slate-900 outline-none focus:border-slate-400">
+    <div class="toolbar">
+      <div class="search-wrap">
+        <svg class="search-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path></svg>
+        <input id="search" type="search" placeholder="Search..." class="search-input">
       </div>
-      <div class="text-sm text-slate-500 whitespace-nowrap">Generated from tmp.benchmarks</div>
+      <div class="toolbar-note">Generated from tmp.benchmarks</div>
+    </div>
+
+    <div class="summary-grid">
+      <div class="summary-card">
+        <div class="summary-label">Models</div>
+        <div class="summary-value">{{ summary.total_models }}</div>
+      </div>
+      <div class="summary-card">
+        <div class="summary-label">Use Cases Run</div>
+        <div class="summary-value">{{ summary.total_test_cases }}</div>
+      </div>
+      <div class="summary-card">
+        <div class="summary-label">Use Cases / Model</div>
+        <div class="summary-value">{{ '%.1f'|format(summary.use_cases_per_model) }}</div>
+      </div>
+      <div class="summary-card">
+        <div class="summary-label">Avg Percent Correct</div>
+        <div class="summary-value">{{ '%.1f'|format(summary.avg_percent_correct) }}%</div>
+      </div>
+      <div class="summary-card">
+        <div class="summary-label">Avg Failure Rate</div>
+        <div class="summary-value">{{ '%.1f'|format(summary.avg_failure_rate) }}%</div>
+      </div>
     </div>
 
     <!-- Leaderboard Table -->
-    <div class="overflow-hidden border border-slate-200 bg-white">
-      <div class="overflow-x-auto">
-        <table id="leaderboard" class="w-full text-sm table-fixed">
+    <div class="table-shell">
+      <div class="table-scroll">
+        <table id="leaderboard">
           <thead>
-            <tr class="border-b border-slate-200 bg-white">
-              <th class="w-12 px-3 py-3.5"></th>
-              <th class="w-48 px-4 py-3.5 text-left font-semibold text-slate-600 text-sm tracking-wide cursor-pointer" data-type="text">Model</th>
-              <th class="w-32 px-4 py-3.5 text-left font-semibold text-slate-600 text-sm tracking-wide cursor-pointer" data-type="number">Percent correct</th>
-              <th class="w-32 px-4 py-3.5 text-left font-semibold text-slate-600 text-sm tracking-wide cursor-pointer" data-type="number">Cost</th>
-              <th class="w-32 px-4 py-3.5 text-left font-semibold text-slate-600 text-sm tracking-wide cursor-pointer" data-type="number">Solved First Try</th>
-              <th class="w-32 px-4 py-3.5 text-left font-semibold text-slate-600 text-sm tracking-wide cursor-pointer" data-type="number">Solved Second Try</th>
-              <th class="w-32 px-4 py-3.5 text-left font-semibold text-slate-600 text-sm tracking-wide cursor-pointer" data-type="number">Failure rate</th>
-              <th class="px-4 py-3.5 text-left font-semibold text-slate-600 text-sm tracking-wide cursor-pointer" data-type="text">Command</th>
+            <tr>
+              <th class="expand-cell"></th>
+              <th class="model-cell" data-type="text">Model</th>
+              <th class="metric-cell" data-type="number">Percent correct</th>
+              <th class="metric-cell" data-type="number">Cost</th>
+              <th class="metric-cell" data-type="number">Solved First Try</th>
+              <th class="metric-cell" data-type="number">Solved Second Try</th>
+              <th class="metric-cell" data-type="number">Failure rate</th>
             </tr>
           </thead>
           <tbody>
             {% for row in rows %}
-            <tr class="main-row border-b border-slate-100 hover:bg-slate-50 transition group row-enter" style="animation-delay: {{ loop.index0 * 0.05 }}s" data-row-id="row-{{ loop.index0 }}">
-              <td class="px-3 py-4 align-top">
-                <button class="expand-button inline-flex h-5 w-5 items-center justify-center rounded-sm border border-slate-300 bg-white text-slate-500 hover:border-slate-400 hover:text-slate-700 transition" type="button" aria-expanded="false" aria-controls="detail-row-{{ loop.index0 }}" data-toggle-details="row-{{ loop.index0 }}">
-                  <svg class="expand-icon h-3.5 w-3.5 transition-transform" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+            <tr class="main-row row-enter" style="animation-delay: {{ loop.index0 * 0.05 }}s" data-row-id="row-{{ loop.index0 }}">
+              <td class="expand-cell">
+                <button class="expand-button" type="button" aria-expanded="false" aria-controls="detail-row-{{ loop.index0 }}" data-toggle-details="row-{{ loop.index0 }}">
+                  <svg class="expand-icon" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
                     <path d="M6 4l8 6-8 6V4z"></path>
                   </svg>
                 </button>
               </td>
-              <td class="px-4 py-4 align-top" data-sort="{{ row.model }}">
-                <div class="font-semibold text-slate-900 leading-5">{{ row.model }}</div>
-                <div class="text-xs text-slate-500 mt-0.5 truncate max-w-[220px]">{{ row.run_name }}</div>
+              <td data-sort="{{ row.model }}">
+                <div class="model-name">{{ row.model }}</div>
+                <div class="run-name">{{ row.run_name }}</div>
               </td>
-              <td class="px-4 py-4 align-top" data-sort="{{ row.percent_correct }}">
+              <td data-sort="{{ row.percent_correct }}">
                 <div class="bar-track">
                   <div class="bar-fill green" style="width: {{ row.percent_correct }}%"></div>
                   <div class="bar-label">{{ '%.1f'|format(row.percent_correct) }}%</div>
                 </div>
               </td>
-              <td class="px-4 py-4 align-top" data-sort="{{ row.total_cost_sort }}">
+              <td data-sort="{{ row.total_cost_sort }}">
                 <div class="bar-track">
                   <div class="bar-fill blue" style="width: {{ row.total_cost_width }}%"></div>
                   <div class="bar-label">{{ row.total_cost }}</div>
                 </div>
               </td>
-              <td class="px-4 py-4 align-top" data-sort="{{ row.pass_first_try }}">
+              <td data-sort="{{ row.pass_first_try }}">
                 <div class="bar-track">
                   <div class="bar-fill green" style="width: {{ row.pass_first_try }}%"></div>
                   <div class="bar-label">{{ '%.1f'|format(row.pass_first_try) }}%</div>
                 </div>
               </td>
-              <td class="px-4 py-4 align-top" data-sort="{{ row.pass_after_retries }}">
+              <td data-sort="{{ row.pass_after_retries }}">
                 <div class="bar-track">
                   <div class="bar-fill green" style="width: {{ row.pass_after_retries }}%"></div>
                   <div class="bar-label">{{ '%.1f'|format(row.pass_after_retries) }}%</div>
                 </div>
               </td>
-              <td class="px-4 py-4 align-top" data-sort="{{ row.failure_rate }}">
+              <td data-sort="{{ row.failure_rate }}">
                 <div class="bar-track">
                   <div class="bar-fill red" style="width: {{ row.failure_rate }}%"></div>
                   <div class="bar-label">{{ '%.1f'|format(row.failure_rate) }}%</div>
                 </div>
               </td>
-              <td class="px-4 py-4 align-top" data-sort="{{ row.command }}">
-                <code class="block max-w-[220px] rounded bg-slate-100 px-2 py-1 text-xs text-slate-700 break-words">{{ row.command or '—' }}</code>
-              </td>
             </tr>
-            <tr id="detail-row-{{ loop.index0 }}" class="detail-row hidden border-b border-slate-100 bg-slate-50/70" data-row-id="row-{{ loop.index0 }}">
-              <td colspan="8" class="px-6 pb-6 pt-0">
-                <div class="ml-4 rounded border border-slate-200 bg-white px-4 py-4">
-                  <div class="mb-3 flex items-center justify-between gap-3">
+            <tr id="detail-row-{{ loop.index0 }}" class="detail-row hidden" data-row-id="row-{{ loop.index0 }}">
+              <td colspan="7" style="padding: 0 1.5rem 1.5rem;">
+                <div class="detail-panel">
+                  <div class="detail-header">
                     <div>
-                      <div class="text-sm font-semibold text-slate-900">{{ row.model }}</div>
-                      <div class="text-xs text-slate-500">{{ row.run_name }}</div>
+                      <div class="detail-title">{{ row.model }}</div>
+                      <div class="detail-subtitle">{{ row.run_name }}</div>
                     </div>
-                    <div class="flex items-center gap-2 text-xs text-slate-500">
-                      <span class="rounded-full bg-slate-100 px-2 py-1 font-medium">Solved First Try: {{ '%.1f'|format(row.pass_first_try) }}%</span>
-                      <span class="rounded-full bg-slate-100 px-2 py-1 font-medium">Solved Second Try: {{ '%.1f'|format(row.pass_after_retries) }}%</span>
-                      <span class="detail-chip fail rounded-full px-2 py-1 font-medium">Failed Rate: {{ '%.1f'|format(row.failed_rate) }}%</span>
+                    <div class="detail-badges">
+                      <span class="badge">Solved First Try: {{ '%.1f'|format(row.pass_first_try) }}%</span>
+                      <span class="badge">Solved Second Try: {{ '%.1f'|format(row.pass_after_retries) }}%</span>
+                      <span class="detail-chip fail badge">Failed Rate: {{ '%.1f'|format(row.failed_rate) }}%</span>
                     </div>
                   </div>
-                  <ul class="grid gap-1 sm:grid-cols-2 xl:grid-cols-3">
-                    {% for detail in row.details %}
-                    <li class="flex items-start gap-2 px-2 py-1 text-sm text-slate-700">
-                      <span class="mt-1 h-1.5 w-1.5 rounded-full bg-slate-300 shrink-0"></span>
-                      <div class="min-w-0">
-                        <span class="font-semibold text-slate-600">{{ detail.label }}:</span>
-                        {% if detail.code %}
-                        <code class="ml-1 break-words rounded bg-slate-100 px-1.5 py-0.5 text-xs text-slate-700">{{ detail.value }}</code>
-                        {% else %}
-                        <span class="ml-1 break-words">{{ detail.value }}</span>
-                        {% endif %}
+                  <div class="detail-overview">
+                    <div class="overview-card">
+                      <div class="overview-label">Percent Correct</div>
+                      <div class="overview-value">{{ '%.1f'|format(row.percent_correct) }}%</div>
+                      <div class="overview-subvalue">Across {{ row.test_cases }} test cases</div>
+                    </div>
+                    <div class="overview-card">
+                      <div class="overview-label">Total Cost</div>
+                      <div class="overview-value">{{ row.total_cost }}</div>
+                      <div class="overview-subvalue">Scaled against all models</div>
+                    </div>
+                    <div class="overview-card">
+                      <div class="overview-label">Avg Time</div>
+                      <div class="overview-value">{{ row.avg_time }}</div>
+                      <div class="overview-subvalue">Per test case</div>
+                    </div>
+                    <div class="overview-card">
+                      <div class="overview-label">Reliability</div>
+                      <div class="overview-value">{{ '%.1f'|format(row.reliable_replies) }}%</div>
+                      <div class="overview-subvalue">Well-formed responses</div>
+                    </div>
+                  </div>
+
+                  <div class="detail-sections">
+                    <section class="detail-section">
+                      <h3 class="detail-section-title">Run Summary</h3>
+                      <div class="detail-stats-grid">
+                        <div class="detail-stat">
+                          <div class="detail-stat-label">Model</div>
+                          <div class="detail-stat-value">{{ row.model }}</div>
+                        </div>
+                        <div class="detail-stat">
+                          <div class="detail-stat-label">Edit Format</div>
+                          <div class="detail-stat-value">{{ row.edit_format or '—' }}</div>
+                        </div>
+                        <div class="detail-stat">
+                          <div class="detail-stat-label">Run Date</div>
+                          <div class="detail-stat-value">{{ row.date or '—' }}</div>
+                        </div>
+                        <div class="detail-stat">
+                          <div class="detail-stat-label">Test Cases</div>
+                          <div class="detail-stat-value">{{ row.test_cases }}</div>
+                        </div>
+                        <div class="detail-stat">
+                          <div class="detail-stat-label">First Try Solved</div>
+                          <div class="detail-stat-value">{{ '%.1f'|format(row.pass_first_try) }}%</div>
+                        </div>
+                        <div class="detail-stat">
+                          <div class="detail-stat-label">Second Try Solved</div>
+                          <div class="detail-stat-value">{{ '%.1f'|format(row.pass_after_retries) }}%</div>
+                        </div>
                       </div>
-                    </li>
-                    {% endfor %}
-                  </ul>
+                    </section>
+
+                    <section class="detail-section">
+                      <h3 class="detail-section-title">Detailed Metrics</h3>
+                      <ul class="detail-list">
+                        {% for detail in row.details %}
+                        <li class="detail-item">
+                          <span class="detail-dot"></span>
+                          <div class="detail-text">
+                            <span class="detail-label">{{ detail.label }}:</span>
+                            {% if detail.code %}
+                            <code class="detail-value">{{ detail.value }}</code>
+                            {% else %}
+                            <span class="detail-value">{{ detail.value }}</span>
+                            {% endif %}
+                          </div>
+                        </li>
+                        {% endfor %}
+                      </ul>
+                    </section>
+                  </div>
                 </div>
               </td>
             </tr>
@@ -204,7 +678,7 @@
       </div>
     </div>
 
-    <div class="mt-5 text-center text-xs text-slate-400">
+    <div class="footer-note">
       Generated from benchmark result directories under tmp.benchmarks.
     </div>
   </main>

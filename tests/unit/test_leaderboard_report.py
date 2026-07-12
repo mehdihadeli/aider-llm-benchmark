@@ -48,16 +48,17 @@ def test_render_html_uses_template_and_details_popup():
 
         assert "Percent correct" in rendered
         assert "Cost" in rendered
-        assert "Command" in rendered
         assert "Correct edit format" in rendered
         assert "Solved First Try" in rendered
         assert "Solved Second Try" in rendered
+        assert "Use Cases Run" in rendered
         assert "Failed Rate: 10.0%" in rendered
         assert "detail-row-0" in rendered
         assert "Pass rate 1" in rendered
         assert "Failed rate" in rendered
         assert "Failed num" in rendered
         assert "Total cost" in rendered
+        assert "Command:" not in rendered
         assert "View details" not in rendered
         assert "detail-modal" not in rendered
 
@@ -138,6 +139,63 @@ def test_write_aggregate_reports_uses_all_runs_when_none_selected():
         write_csv.assert_called_once()
         render_html.assert_called_once()
         write_yaml.assert_called_once()
+
+
+def test_load_leaderboard_yaml_and_convert_entry_to_row():
+    yaml_text = """- dirname: 2026-07-12-sim-gpt-4
+  test_cases: 10
+  model: github_copilot/gpt-4
+  edit_format: diff
+  pass_rate_1: 30
+  pass_rate_2: 40
+  pass_num_1: 3
+  pass_num_2: 4
+  failed_rate: 30
+  failed_num: 3
+  percent_cases_well_formed: 100
+  total_tests: 10
+  command: aider --model github_copilot/gpt-4
+  date: 2026-07-12
+  versions: 0.86.2
+  seconds_per_case: 0
+  total_cost: 0
+"""
+
+    with TemporaryDirectory() as tmpdir:
+        yaml_path = Path(tmpdir) / "polyglot_leaderboard.yml"
+        yaml_path.write_text(yaml_text, encoding="utf-8")
+
+        entries = leaderboard_report.load_leaderboard_yaml(yaml_path)
+        row = leaderboard_report.row_from_yaml_entry(entries[0])
+
+    assert len(entries) == 1
+    assert row["dirname"] == "2026-07-12-sim-gpt-4"
+    assert row["pass_rate_1"] == 30.0
+    assert row["pass_rate_2"] == 40.0
+    assert row["pass_num_1"] == 3
+    assert row["pass_num_2"] == 4
+    assert row["failed_num"] == 3
+    assert row["pass_percent"] == 70.0
+
+
+def test_row_from_yaml_entry_uses_pass_counts_for_percent_correct():
+    entry = {
+        "dirname": "2026-07-13-sim-gpt-4.1",
+        "test_cases": 5,
+        "total_tests": 5,
+        "pass_rate_1": 60,
+        "pass_rate_2": 20,
+        "pass_num_1": 3,
+        "pass_num_2": 1,
+        "failed_rate": 20,
+        "failed_num": 1,
+    }
+
+    row = leaderboard_report.row_from_yaml_entry(entry)
+
+    assert row["pass_percent"] == 80.0
+    assert row["percent_well_formed"] == 100.0
+    assert row["is_complete"] is True
 
 
 def test_summarize_dir_reports_task_pass_rates_and_failures_by_attempt():
