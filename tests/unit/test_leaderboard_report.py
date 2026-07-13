@@ -47,8 +47,9 @@ def test_render_html_uses_template_and_details_popup():
         rendered = output_path.read_text(encoding="utf-8")
 
         assert "Percent correct" in rendered
-        assert "Cost" in rendered
-        assert "Correct edit format" in rendered
+        assert "Test Case Cost" in rendered
+        assert "Total Cost" in rendered
+        assert "Edit Format" in rendered
         assert "Solved First Try" in rendered
         assert "Solved Second Try" in rendered
         assert "Avg Use Cases per Model" in rendered
@@ -56,14 +57,15 @@ def test_render_html_uses_template_and_details_popup():
         assert "Avg Failures per Model" in rendered
         assert "Avg First-Try Successes per Model" in rendered
         assert "Avg Second-Try Successes per Model" in rendered
-        assert "% success rate" in rendered
-        assert "% failure rate" in rendered
+        assert "success rate" in rendered
+        assert "failure rate" in rendered
         assert "Use Cases Run" not in rendered
         assert "Failed Rate: 10.0%" in rendered
         assert "detail-row-0" in rendered
         assert "Pass rate 1" in rendered
         assert "Failed rate" in rendered
         assert "Failed num" in rendered
+        assert "Test case cost" in rendered
         assert "Total cost" in rendered
         assert "Command:" not in rendered
         assert "View details" not in rendered
@@ -124,7 +126,9 @@ def test_write_markdown_renders_summary_and_rows():
         assert "## Summary" in rendered
         assert "## Runs" in rendered
         assert "| Model | Run | % Correct |" in rendered
+        assert "| Test Case Cost | Total Cost |" in rendered
         assert "github/gpt-4.1" in rendered
+        assert "$0.0123" in rendered
         assert "$0.1234" in rendered
 
 

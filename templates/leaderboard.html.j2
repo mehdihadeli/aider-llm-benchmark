@@ -558,7 +558,8 @@
               <th class="expand-cell"></th>
               <th class="model-cell" data-type="text">Model</th>
               <th class="metric-cell" data-type="number">Percent correct</th>
-              <th class="metric-cell" data-type="number">Cost</th>
+              <th class="metric-cell" data-type="number">Test Case Cost</th>
+              <th class="metric-cell" data-type="number">Total Cost</th>
               <th class="metric-cell" data-type="number">Solved First Try</th>
               <th class="metric-cell" data-type="number">Solved Second Try</th>
               <th class="metric-cell" data-type="number">Failure rate</th>
@@ -582,6 +583,12 @@
                 <div class="bar-track">
                   <div class="bar-fill green" style="width: {{ row.percent_correct }}%"></div>
                   <div class="bar-label">{{ '%.1f'|format(row.percent_correct) }}%</div>
+                </div>
+              </td>
+              <td data-sort="{{ row.test_case_cost_sort }}">
+                <div class="bar-track">
+                  <div class="bar-fill blue" style="width: {{ row.test_case_cost_width }}%"></div>
+                  <div class="bar-label">{{ row.test_case_cost }}</div>
                 </div>
               </td>
               <td data-sort="{{ row.total_cost_sort }}">
@@ -610,7 +617,7 @@
               </td>
             </tr>
             <tr id="detail-row-{{ loop.index0 }}" class="detail-row hidden" data-row-id="row-{{ loop.index0 }}">
-              <td colspan="7" style="padding: 0 1.5rem 1.5rem;">
+              <td colspan="8" style="padding: 0 1.5rem 1.5rem;">
                 <div class="detail-panel">
                   <div class="detail-header">
                     <div>
@@ -628,6 +635,11 @@
                       <div class="overview-label">Percent Correct</div>
                       <div class="overview-value">{{ '%.1f'|format(row.percent_correct) }}%</div>
                       <div class="overview-subvalue">Across {{ row.test_cases }} test cases</div>
+                    </div>
+                    <div class="overview-card">
+                      <div class="overview-label">Test Case Cost</div>
+                      <div class="overview-value">{{ row.test_case_cost }}</div>
+                      <div class="overview-subvalue">Average cost per test case</div>
                     </div>
                     <div class="overview-card">
                       <div class="overview-label">Total Cost</div>

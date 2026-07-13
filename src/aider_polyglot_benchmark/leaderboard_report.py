@@ -473,14 +473,14 @@ def write_markdown(rows, output_path, title="LLM Coding Benchmark"):
             "",
             "## Runs",
             "",
-            "| Model | Run | % Correct | 1st Try | 2nd Try | Failure Rate | Test Cases | Total Cost | Avg Time |",
-            "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
+            "| Model | Run | % Correct | 1st Try | 2nd Try | Failure Rate | Test Cases | Test Case Cost | Total Cost | Avg Time |",
+            "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
         ]
     )
 
     for row in rows:
         lines.append(
-            "| {model} | {dirname} | {pass_percent:.1f}% | {pass_rate_1:.1f}% | {last_pass_rate:.1f}% | {failed_rate:.1f}% | {test_cases} | ${total_cost:.4f} | {seconds_per_case:.1f}s |".format(
+            "| {model} | {dirname} | {pass_percent:.1f}% | {pass_rate_1:.1f}% | {last_pass_rate:.1f}% | {failed_rate:.1f}% | {test_cases} | ${cost_per_case:.4f} | ${total_cost:.4f} | {seconds_per_case:.1f}s |".format(
                 model=row.get("model") or "unknown",
                 dirname=row.get("dirname", ""),
                 pass_percent=float(row.get("pass_percent", 0) or 0),
@@ -488,6 +488,7 @@ def write_markdown(rows, output_path, title="LLM Coding Benchmark"):
                 last_pass_rate=float(row.get("last_pass_rate", 0) or 0),
                 failed_rate=float(row.get("failed_rate", 0) or 0),
                 test_cases=int(row.get("test_cases", 0) or 0),
+                cost_per_case=float(row.get("cost_per_case", 0) or 0),
                 total_cost=float(row.get("total_cost", 0) or 0),
                 seconds_per_case=float(row.get("seconds_per_case", 0) or 0),
             )
@@ -569,6 +570,7 @@ def build_detail_payload(row):
             {"label": "Date", "value": str(row.get("date", ""))},
             {"label": "Versions", "value": str(row.get("versions") or "")},
             {"label": "Seconds per case", "value": f"{float(row.get('seconds_per_case', 0) or 0):.1f}"},
+            {"label": "Test case cost", "value": f"{float(row.get('cost_per_case', 0) or 0):.4f}"},
             {"label": "Total cost", "value": f"{float(row.get('total_cost', 0) or 0):.4f}"},
         ],
     }
@@ -640,15 +642,9 @@ def build_display_rows(rows):
                 "reliable_replies": float(row.get("percent_well_formed", 0) or 0),
                 "avg_time": format_duration(row.get("seconds_per_case", 0)),
                 "avg_time_sort": float(row.get("seconds_per_case", 0) or 0),
-                "cost": format_money(row.get("cost_per_case", 0)),
-                "cost_sort": float(row.get("cost_per_case", 0) or 0),
-                "cost_width": max(
-                    0,
-                    min(100, (float(row.get("cost_per_case", 0) or 0) / denominator) * 100),
-                ),
-                "cost_per_exercise": format_money(row.get("cost_per_case", 0)),
-                "cost_per_exercise_sort": float(row.get("cost_per_case", 0) or 0),
-                "cost_per_exercise_width": max(
+                "test_case_cost": format_money(row.get("cost_per_case", 0)),
+                "test_case_cost_sort": float(row.get("cost_per_case", 0) or 0),
+                "test_case_cost_width": max(
                     0,
                     min(100, (float(row.get("cost_per_case", 0) or 0) / denominator) * 100),
                 ),

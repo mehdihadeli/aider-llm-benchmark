@@ -316,6 +316,55 @@
 			"command": "uv run benchmark --hard-purge && uv run python -c \"from pathlib import Path; root=Path('tmp.benchmarks'); print(sorted(p.name for p in root.iterdir()) if root.exists() else [])\"",
 			"isBackground": false,
 			"group": "test"
+		},
+		{
+			"label": "Run leaderboard report unit tests",
+			"type": "shell",
+			"command": "uv",
+			"args": [
+				"run",
+				"python",
+				"-m",
+				"pytest",
+				"-q",
+				"tests/unit/test_leaderboard_report.py"
+			],
+			"isBackground": false,
+			"group": "test"
+		},
+		{
+			"label": "Run cost leaderboard tests",
+			"type": "shell",
+			"command": "uv",
+			"args": [
+				"run",
+				"python",
+				"-m",
+				"pytest",
+				"-q",
+				"tests/unit/test_leaderboard_report.py",
+				"-k",
+				"render_html_uses_template_and_details_popup or write_markdown_renders_summary_and_rows"
+			],
+			"isBackground": false,
+			"group": "test"
+		},
+		{
+			"label": "Re-run cost leaderboard tests",
+			"type": "shell",
+			"command": "uv",
+			"args": [
+				"run",
+				"python",
+				"-m",
+				"pytest",
+				"-q",
+				"tests/unit/test_leaderboard_report.py",
+				"-k",
+				"render_html_uses_template_and_details_popup or write_markdown_renders_summary_and_rows"
+			],
+			"isBackground": false,
+			"group": "test"
 		}
 	]
 }
