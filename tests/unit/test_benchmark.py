@@ -5,8 +5,11 @@ import os
 import shutil
 import subprocess
 import sys
+import threading
+import time
 import unittest
 import json
+from concurrent.futures import Future
 from contextlib import redirect_stdout
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -38,10 +41,15 @@ from aider_polyglot_benchmark.benchmark import (
     LEGACY_EXERCISES_DIR_DEFAULT,
     normalize_models,
     parse_languages,
+    load_tracked_process_ids,
+    register_tracked_process,
+    refresh_progress_artifacts,
     reset_shared_rate_limiters,
     resolve_model_parallelism,
     remove_tree,
     remove_tree_with_retries,
+    resolve_report_mode,
+    run_benchmark_for_model,
     run_with_rate_limit_retry,
     stage_dir_for_cleanup,
     stage_dir_for_cleanup_with_retries,
@@ -298,6 +306,26 @@ class TestCleanupBenchmarkArtifacts(unittest.TestCase):
             self.assertIsNone(staged)
             self.assertTrue(target.exists())
 
+    def test_register_tracked_process_keeps_all_ids_under_concurrent_updates(self):
+        with TemporaryDirectory() as tmpdir:
+            benchmark_root = Path(tmpdir)
+            barrier = threading.Barrier(8)
+            threads = []
+
+            def worker(pid):
+                barrier.wait()
+                register_tracked_process(pid, benchmark_root=benchmark_root)
+
+            for pid in range(101, 109):
+                thread = threading.Thread(target=worker, args=(pid,))
+                thread.start()
+                threads.append(thread)
+
+            for thread in threads:
+                thread.join()
+
+            self.assertEqual(load_tracked_process_ids(benchmark_root), list(range(101, 109)))
+
 
 class TestLocalVenvHelpers(unittest.TestCase):
     def test_find_local_venv_python_prefers_repo_venv_layout(self):
@@ -408,6 +436,14 @@ class TestRateLimitHelpers(unittest.TestCase):
         self.assertEqual(resolve_model_parallelism(["github/gpt-4o", "github/gpt-4.1"], None), 1)
         self.assertEqual(resolve_model_parallelism(["github/gpt-4o"], 3), 3)
 
+    def test_resolve_report_mode_defaults_to_end_when_parallel(self):
+        self.assertEqual(resolve_report_mode("auto", 2, 1, 1), "end")
+        self.assertEqual(resolve_report_mode("auto", 1, 2, 1), "end")
+        self.assertEqual(resolve_report_mode("auto", 1, 1, 2), "end")
+        self.assertEqual(resolve_report_mode("auto", 1, 1, 1), "live")
+        self.assertEqual(resolve_report_mode("live", 4, 3, 2), "live")
+        self.assertEqual(resolve_report_mode("end", 1, 1, 1), "end")
+
 
 class TestMainCli(unittest.TestCase):
     def tearDown(self):
@@ -478,8 +514,12 @@ class TestMainCli(unittest.TestCase):
             shutdown_calls = []
 
             class FakeFuture:
-                def result(self):
-                    raise KeyboardInterrupt()
+                def __init__(self):
+                    self._future = Future()
+                    self._future.set_exception(KeyboardInterrupt())
+
+                def __getattr__(self, name):
+                    return getattr(self._future, name)
 
             class FakeExecutor:
                 def __init__(self, *args, **kwargs):
@@ -614,6 +654,151 @@ class TestMainCli(unittest.TestCase):
             self.assertEqual(called_dirnames, [newer_run_dir.name])
 
 
+class TestThreadedProgress(unittest.TestCase):
+    def test_run_benchmark_for_model_skips_live_refresh_in_end_mode(self):
+        with TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            source_root = tmp_path / "tracks"
+            run_dir = tmp_path / "tmp.benchmarks" / "2026-07-14-00-00-00--sample"
+            alpha_dir = source_root / "csharp" / "exercises" / "practice" / "alpha"
+            beta_dir = source_root / "csharp" / "exercises" / "practice" / "beta"
+            alpha_dir.mkdir(parents=True)
+            beta_dir.mkdir(parents=True)
+
+            with patch("aider_polyglot_benchmark.benchmark.random.shuffle", lambda items: None):
+                with patch("aider_polyglot_benchmark.benchmark.models.register_litellm_models", return_value=[]):
+                    with patch("aider_polyglot_benchmark.benchmark.run_test", return_value={"testcase": "alpha"}):
+                        with patch("aider_polyglot_benchmark.benchmark.refresh_progress_artifacts") as refresh:
+                            with patch("aider_polyglot_benchmark.benchmark.summarize_results"):
+                                status = run_benchmark_for_model(
+                                    run_dir,
+                                    "github_copilot/gpt-4",
+                                    0,
+                                    "csharp",
+                                    None,
+                                    None,
+                                    None,
+                                    None,
+                                    None,
+                                    False,
+                                    True,
+                                    True,
+                                    False,
+                                    1,
+                                    2,
+                                    2,
+                                    None,
+                                    None,
+                                    None,
+                                    None,
+                                    1,
+                                    0,
+                                    0.0,
+                                    0.0,
+                                    "end",
+                                    str(source_root),
+                                    "deadbee",
+                                )
+
+            self.assertEqual(status, 0)
+            refresh.assert_not_called()
+
+    def test_run_benchmark_for_model_emits_worker_slot_progress_updates(self):
+        with TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            source_root = tmp_path / "tracks"
+            run_dir = tmp_path / "tmp.benchmarks" / "2026-07-14-00-00-00--sample"
+            alpha_dir = source_root / "csharp" / "exercises" / "practice" / "alpha"
+            beta_dir = source_root / "csharp" / "exercises" / "practice" / "beta"
+            alpha_dir.mkdir(parents=True)
+            beta_dir.mkdir(parents=True)
+
+            added_tasks = []
+            updated_tasks = []
+            next_task_id = 0
+
+            def fake_add_task(description, total, status="queued", visible=True):
+                nonlocal next_task_id
+                next_task_id += 1
+                added_tasks.append(
+                    {
+                        "id": next_task_id,
+                        "description": description,
+                        "total": total,
+                        "status": status,
+                        "visible": visible,
+                    }
+                )
+                return next_task_id
+
+            def fake_update_task(task_id, advance=0, status=None, **kwargs):
+                updated_tasks.append(
+                    {
+                        "task_id": task_id,
+                        "advance": advance,
+                        "status": status,
+                        **kwargs,
+                    }
+                )
+
+            def fake_run_test(original_dname, testdir, *args, **kwargs):
+                time.sleep(0.02)
+                return {"testcase": Path(testdir).name}
+
+            with patch("aider_polyglot_benchmark.benchmark.random.shuffle", lambda items: None):
+                with patch("aider_polyglot_benchmark.benchmark.models.register_litellm_models", return_value=[]):
+                    with patch("aider_polyglot_benchmark.benchmark.add_benchmark_task", side_effect=fake_add_task):
+                        with patch("aider_polyglot_benchmark.benchmark.update_benchmark_task", side_effect=fake_update_task):
+                            with patch("aider_polyglot_benchmark.benchmark.run_test", side_effect=fake_run_test):
+                                with patch("aider_polyglot_benchmark.benchmark.refresh_progress_artifacts"):
+                                    status = run_benchmark_for_model(
+                                            run_dir,
+                                            "github_copilot/gpt-4",
+                                            0,
+                                            "csharp",
+                                            None,
+                                            None,
+                                            None,
+                                            None,
+                                            None,
+                                            False,
+                                            True,
+                                            True,
+                                            False,
+                                            1,
+                                            2,
+                                            2,
+                                            None,
+                                            None,
+                                            None,
+                                            None,
+                                            1,
+                                            0,
+                                            0.0,
+                                            0.0,
+                                            "live",
+                                            str(source_root),
+                                            "deadbee",
+                                        )
+
+            self.assertEqual(status, 0)
+            self.assertEqual(len(added_tasks), 3)
+            self.assertEqual(added_tasks[0]["description"], "github_copilot/gpt-4")
+            self.assertEqual(
+                [task["description"] for task in added_tasks[1:]],
+                ["gpt-4 worker 1", "gpt-4 worker 2"],
+            )
+            self.assertTrue(all(task["visible"] is False for task in added_tasks[1:]))
+
+            worker_updates = [
+                update for update in updated_tasks
+                if update["task_id"] in {added_tasks[1]["id"], added_tasks[2]["id"]}
+            ]
+            self.assertTrue(any(update.get("visible") is True for update in worker_updates))
+            self.assertTrue(any((update.get("status") or "").startswith("running ") for update in worker_updates))
+            self.assertTrue(any(update.get("visible") is False and update.get("status") == "idle" for update in worker_updates))
+
+
 class TestModelNormalization(unittest.TestCase):
     def test_build_generated_model_dirnames_use_timestamp_and_single_model_slug(self):
         with patch("aider_polyglot_benchmark.benchmark.datetime.datetime") as fake_datetime:
@@ -705,6 +890,40 @@ class TestSelectedExerciseCopy(unittest.TestCase):
 
 
 class TestBenchmarkReport(unittest.TestCase):
+    def test_refresh_progress_artifacts_serializes_concurrent_updates(self):
+        active_calls = 0
+        max_active_calls = 0
+        lock = threading.Lock()
+        start_barrier = threading.Barrier(6)
+
+        def fake_summarize(dirname, quiet=False):
+            nonlocal active_calls, max_active_calls
+            with lock:
+                active_calls += 1
+                max_active_calls = max(max_active_calls, active_calls)
+            time.sleep(0.02)
+            with lock:
+                active_calls -= 1
+
+        def call_refresh():
+            start_barrier.wait()
+            refresh_progress_artifacts(Path("tmp.benchmarks/sample-run"), quiet=True)
+
+        threads = []
+        with patch("aider_polyglot_benchmark.benchmark.summarize_results", side_effect=fake_summarize) as summarize:
+            with patch("aider_polyglot_benchmark.benchmark.write_aggregate_reports_for_progress") as write_reports:
+                for _ in range(6):
+                    thread = threading.Thread(target=call_refresh)
+                    thread.start()
+                    threads.append(thread)
+
+                for thread in threads:
+                    thread.join()
+
+        self.assertEqual(summarize.call_count, 6)
+        self.assertEqual(write_reports.call_count, 6)
+        self.assertEqual(max_active_calls, 1)
+
     def test_summarize_results_writes_failed_metrics_to_benchmark_report(self):
         with TemporaryDirectory() as tmpdir:
             run_dir = Path(tmpdir) / "2026-07-06-17-42-16--sample-run"

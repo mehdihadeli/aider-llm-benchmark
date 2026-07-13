@@ -118,6 +118,15 @@ The benchmark now has 3 separate concurrency controls, and they affect different
 - `--model-parallelism`: how many selected models can run at once.
 - `--max-llm-concurrency`: how many in-flight LLM requests are allowed at once per provider scope such as `github`, `openai`, or `anthropic`.
 
+Report generation is now separated from those concurrency knobs:
+
+- `--report-mode auto` is the default and resolves to end-only report generation for parallel runs
+- that means worker threads write only their own `.aider.results.json` files while the run is active
+- `--report-mode end` forces that same end-only behavior even if the run is otherwise serial
+- each model writes its `benchmark-report.yml` once when that model finishes
+- the batch writes root aggregate reports once when all models finish
+- `--report-mode live` forces live report refresh during the run
+
 These are intentionally separate because active test cases are not the same thing as live API pressure.
 You can keep many exercises moving in parallel while still limiting real provider traffic.
 
@@ -131,6 +140,8 @@ Default behavior is conservative:
 - if `--threads 1`, default LLM concurrency is `1`
 - if `--threads > 1`, default LLM concurrency is `2`
 - if `--model-parallelism` is omitted, only `1` model run is active at a time
+- if any parallelism is active through `--threads`, `--model-parallelism`, or multiple `--model` flags, default report mode is end-only
+- if the run is fully serial, default report mode is live
 
 ### Setup for benchmarking
 
@@ -271,6 +282,7 @@ Use these flags together:
 - `--threads N`: exercise-level parallelism inside one model run.
 - `--model-parallelism N`: model-level parallelism across repeated `--model` values.
 - `--max-llm-concurrency N`: provider-scoped request cap. This is usually the most important rate-limit safety knob.
+- `--report-mode auto|end|live`: report refresh strategy. `auto` is the default and chooses `end` for parallel runs and `live` for serial runs.
 - `--rate-limit-retries N`: how many times to retry after a detected rate-limit response.
 - `--rate-limit-backoff-initial SECONDS`: initial cooldown after a detected rate-limit response.
 - `--rate-limit-backoff-max SECONDS`: maximum cooldown after repeated rate-limit responses.
@@ -280,6 +292,7 @@ How to think about them:
 - raise `--threads` when local file preparation and test execution are the bottleneck
 - raise `--model-parallelism` when you want multiple models to progress at once
 - raise `--max-llm-concurrency` only when your provider quotas are known to support it
+- keep `--report-mode auto` or force `--report-mode end` when you want the lowest shared-file contention during parallel runs
 - lower `--max-llm-concurrency` before lowering `--threads` if you see `429` errors
 
 ### Recommended starting profiles
@@ -630,6 +643,14 @@ Every benchmark run writes a per-run `benchmark-report.yml` inside that run dire
 - `polyglot_leaderboard.yml`
 
 Recommended default for sharing results with other people is `leaderboard.md`. It is the easiest format to paste into chat, issues, PRs, or notes. Use `leaderboard.html` when you want the interactive table view, and `polyglot_leaderboard.yml` when you want machine-friendly structured data.
+
+By default, parallel runs now avoid live report rewrites while work is still in flight. In `--report-mode auto`, any run using parallel exercise threads, parallel model execution, or multiple `--model` flags behaves like `--report-mode end`:
+
+- exercise workers write only their own `.aider.results.json` files during execution
+- each model writes `benchmark-report.yml` once when that model completes
+- root `leaderboard.md`, `leaderboard.html`, and `polyglot_leaderboard.yml` are written once when the batch completes
+
+If you want continuously refreshed reports during the run for debugging or live inspection, pass `--report-mode live` explicitly.
 
 For a two-model run like `github-multi-sample`, you will also get one run directory per model, for example:
 

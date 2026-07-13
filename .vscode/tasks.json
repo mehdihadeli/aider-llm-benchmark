@@ -365,6 +365,159 @@
 			],
 			"isBackground": false,
 			"group": "test"
+		},
+		{
+			"label": "Run parallel corruption integration test",
+			"type": "shell",
+			"command": "uv",
+			"args": [
+				"run",
+				"python",
+				"-m",
+				"pytest",
+				"-q",
+				"tests/integration/test_benchmark_cli.py",
+				"-k",
+				"parallel_reports_remain_parseable_during_multi_model_run or model_parallelism_and_rate_limit_retry_simulate_real_world"
+			],
+			"isBackground": false,
+			"group": "test"
+		},
+		{
+			"label": "Re-run parallel corruption integration test",
+			"type": "shell",
+			"command": "uv",
+			"args": [
+				"run",
+				"python",
+				"-m",
+				"pytest",
+				"-q",
+				"tests/integration/test_benchmark_cli.py",
+				"-k",
+				"parallel_reports_remain_parseable_during_multi_model_run or model_parallelism_and_rate_limit_retry_simulate_real_world"
+			],
+			"isBackground": false,
+			"group": "test"
+		},
+		{
+			"label": "Validate report mode integration tests",
+			"type": "shell",
+			"command": "uv",
+			"args": [
+				"run",
+				"python",
+				"-m",
+				"pytest",
+				"-q",
+				"tests/integration/test_benchmark_cli.py",
+				"-k",
+				"parallel_reports_remain_parseable_during_multi_model_run or model_parallelism_and_rate_limit_retry_simulate_real_world"
+			],
+			"isBackground": false,
+			"group": "test"
+		},
+		{
+			"label": "Run auto report mode integration test",
+			"type": "shell",
+			"command": "uv",
+			"args": [
+				"run",
+				"python",
+				"-m",
+				"pytest",
+				"-q",
+				"tests/integration/test_benchmark_cli.py",
+				"-k",
+				"auto_mode_defers_reports_until_model_or_batch_end"
+			],
+			"isBackground": false,
+			"group": "test"
+		},
+		{
+			"label": "Revalidate parallel report mode integration tests",
+			"type": "shell",
+			"command": "uv",
+			"args": [
+				"run",
+				"python",
+				"-m",
+				"pytest",
+				"-q",
+				"tests/integration/test_benchmark_cli.py",
+				"-k",
+				"parallel_reports_remain_parseable_during_multi_model_run or model_parallelism_and_rate_limit_retry_simulate_real_world or auto_mode_defers_reports_until_model_or_batch_end"
+			],
+			"isBackground": false,
+			"group": "test"
+		},
+		{
+			"label": "Run separate parallelism integration tests",
+			"type": "shell",
+			"command": "uv",
+			"args": [
+				"run",
+				"python",
+				"-m",
+				"pytest",
+				"-q",
+				"tests/integration/test_benchmark_cli.py",
+				"-k",
+				"threads_runs_exercise_cases_in_parallel_within_one_model or model_parallelism_runs_models_in_parallel_when_threads_are_serial or max_llm_concurrency_caps_same_provider_requests_across_parallel_work"
+			],
+			"isBackground": false,
+			"group": "test"
+		},
+		{
+			"label": "Revalidate all parallelism integration tests",
+			"type": "shell",
+			"command": "uv",
+			"args": [
+				"run",
+				"python",
+				"-m",
+				"pytest",
+				"-q",
+				"tests/integration/test_benchmark_cli.py",
+				"-k",
+				"threads_runs_exercise_cases_in_parallel_within_one_model or model_parallelism_runs_models_in_parallel_when_threads_are_serial or max_llm_concurrency_caps_same_provider_requests_across_parallel_work or parallel_reports_remain_parseable_during_multi_model_run or model_parallelism_and_rate_limit_retry_simulate_real_world or auto_mode_defers_reports_until_model_or_batch_end"
+			],
+			"isBackground": false,
+			"group": "test"
+		},
+		{
+			"label": "Re-run report-mode benchmark integration tests",
+			"type": "shell",
+			"command": "uv",
+			"args": [
+				"run",
+				"python",
+				"-m",
+				"pytest",
+				"-q",
+				"tests/integration/test_benchmark_cli.py",
+				"-k",
+				"threads_runs_exercise_cases_in_parallel_within_one_model or model_parallelism_runs_models_in_parallel_when_threads_are_serial or max_llm_concurrency_caps_same_provider_requests_across_parallel_work or parallel_reports_remain_parseable_during_multi_model_run or auto_mode_defers_reports_until_model_or_batch_end"
+			],
+			"isBackground": false,
+			"group": "test"
+		},
+		{
+			"label": "Run invalid report-mode test",
+			"type": "shell",
+			"command": "uv",
+			"args": [
+				"run",
+				"python",
+				"-m",
+				"pytest",
+				"-q",
+				"tests/integration/test_benchmark_cli.py",
+				"-k",
+				"invalid_report_mode"
+			],
+			"isBackground": false,
+			"group": "test"
 		}
 	]
 }

@@ -10,11 +10,12 @@ import signal
 import stat
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 import traceback
 from collections import defaultdict
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextlib import contextmanager, nullcontext, redirect_stdout
 from importlib import metadata as importlib_metadata
 from pathlib import Path
@@ -35,6 +36,9 @@ _RATE_LIMIT_PATTERNS = (
 _RATE_LIMITERS = {}
 _RATE_LIMITERS_LOCK = threading.Lock()
 _CANCEL_EVENT = threading.Event()
+_AGGREGATE_REPORTS_LOCK = threading.RLock()
+_PROCESS_TRACKING_LOCK = threading.RLock()
+_PROGRESS_REFRESH_LOCK = threading.RLock()
 
 
 class BenchmarkCancelled(Exception):
@@ -179,6 +183,22 @@ def benchmark_print(message="", style=None):
     BENCHMARK_CONSOLE.print(message, style=style)
 
 
+def write_text_atomic(path, content, encoding="utf-8"):
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
+    try:
+        with os.fdopen(fd, "w", encoding=encoding) as handle:
+            handle.write(content)
+        os.replace(tmp_name, path)
+    except Exception:
+        try:
+            os.unlink(tmp_name)
+        except FileNotFoundError:
+            pass
+        raise
+
+
 def make_benchmark_progress():
     return Progress(
         SpinnerColumn(),
@@ -217,21 +237,22 @@ def benchmark_progress(enabled=True):
                 _BENCHMARK_PROGRESS = None
 
 
-def add_benchmark_task(description, total, status="queued"):
+def add_benchmark_task(description, total, status="queued", visible=True):
     with _BENCHMARK_PROGRESS_LOCK:
         if _BENCHMARK_PROGRESS is None:
             return None
-        return _BENCHMARK_PROGRESS.add_task(description, total=total, status=status)
+        return _BENCHMARK_PROGRESS.add_task(description, total=total, status=status, visible=visible)
 
 
-def update_benchmark_task(task_id, advance=0, status=None):
+def update_benchmark_task(task_id, advance=0, status=None, **kwargs):
     with _BENCHMARK_PROGRESS_LOCK:
         if _BENCHMARK_PROGRESS is None or task_id is None:
             return
-        kwargs = {"advance": advance}
+        update_kwargs = {"advance": advance}
         if status is not None:
-            kwargs["status"] = status
-        _BENCHMARK_PROGRESS.update(task_id, **kwargs)
+            update_kwargs["status"] = status
+        update_kwargs.update(kwargs)
+        _BENCHMARK_PROGRESS.update(task_id, **update_kwargs)
 
 
 def find_latest_benchmark_dir():
@@ -344,7 +365,7 @@ def write_benchmark_report(dirname, report):
         if key == "dirname":
             continue
         lines.append(f"  {key}: {yaml_scalar(value)}")
-    report_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    write_text_atomic(report_path, "\n".join(lines) + "\n", encoding="utf-8")
     return report_path
 
 
@@ -353,6 +374,12 @@ def write_aggregate_reports_for_progress(dirname, quiet=False):
         write_aggregate_reports([dirname], quiet=quiet)
     except Exception as exc:
         benchmark_print(f"Warning: failed to update aggregate reports: {exc}", style="yellow")
+
+
+def refresh_progress_artifacts(dirname, quiet=False):
+    with _PROGRESS_REFRESH_LOCK:
+        summarize_results(dirname, quiet=quiet)
+        write_aggregate_reports_for_progress(dirname, quiet=quiet)
 
 
 def safe_console_rule(console, title=None):
@@ -637,6 +664,17 @@ def resolve_model_parallelism(model_names, requested_parallelism):
     return 1
 
 
+def resolve_report_mode(requested_mode, threads, model_parallelism, model_count):
+    mode = (requested_mode or "auto").strip().lower()
+    if mode not in {"auto", "live", "end"}:
+        raise ValueError(f"Unsupported report mode: {requested_mode}")
+    if mode != "auto":
+        return mode
+
+    has_parallelism = threads > 1 or model_parallelism > 1 or model_count > 1
+    return "end" if has_parallelism else "live"
+
+
 def run_single_model_benchmark(
     model_name,
     run_dirname,
@@ -662,6 +700,7 @@ def run_single_model_benchmark(
     rate_limit_retries,
     rate_limit_backoff_initial,
     rate_limit_backoff_max,
+    report_mode,
     exercises_dir,
     commit_hash,
 ):
@@ -694,6 +733,7 @@ def run_single_model_benchmark(
         rate_limit_retries,
         rate_limit_backoff_initial,
         rate_limit_backoff_max,
+        report_mode,
         exercises_dir,
         commit_hash,
     )
@@ -702,31 +742,32 @@ def run_single_model_benchmark(
 def write_aggregate_reports(dirnames=None, stats_languages=None, write_empty_yaml=False, quiet=False):
     from aider_polyglot_benchmark import leaderboard_report
 
-    dirnames = leaderboard_report.find_benchmark_dirs(dirnames)
-    rows = leaderboard_report.build_rows(dirnames, stats_languages=stats_languages)
-    yaml_path = leaderboard_report.BENCHMARK_ROOT / "polyglot_leaderboard.yml"
-    if not rows:
-        if not quiet:
-            print("No benchmark results found to aggregate.")
-        if write_empty_yaml:
-            leaderboard_report.write_yaml([], yaml_path)
+    with _AGGREGATE_REPORTS_LOCK:
+        dirnames = leaderboard_report.find_benchmark_dirs(dirnames)
+        rows = leaderboard_report.build_rows(dirnames, stats_languages=stats_languages)
+        yaml_path = leaderboard_report.BENCHMARK_ROOT / "polyglot_leaderboard.yml"
+        if not rows:
             if not quiet:
-                print(f"Wrote YAML: {yaml_path}")
-        return
+                print("No benchmark results found to aggregate.")
+            if write_empty_yaml:
+                leaderboard_report.write_yaml([], yaml_path)
+                if not quiet:
+                    print(f"Wrote YAML: {yaml_path}")
+            return
 
-    yaml_entries = leaderboard_report.build_yaml_entries(dirnames, stats_languages=stats_languages)
-    md_path = leaderboard_report.BENCHMARK_ROOT / "leaderboard.md"
-    html_path = leaderboard_report.BENCHMARK_ROOT / "leaderboard.html"
+        yaml_entries = leaderboard_report.build_yaml_entries(dirnames, stats_languages=stats_languages)
+        md_path = leaderboard_report.BENCHMARK_ROOT / "leaderboard.md"
+        html_path = leaderboard_report.BENCHMARK_ROOT / "leaderboard.html"
 
-    leaderboard_report.write_markdown(rows, md_path, "LLMs Benchmark Leaderboard")
-    leaderboard_report.render_html(rows, html_path, "LLMs BenchmarkLLM Leaderboards")
-    leaderboard_report.write_yaml(yaml_entries, yaml_path)
+        leaderboard_report.write_markdown(rows, md_path, "LLMs Benchmark Leaderboard")
+        leaderboard_report.render_html(rows, html_path, "LLMs BenchmarkLLM Leaderboards")
+        leaderboard_report.write_yaml(yaml_entries, yaml_path)
 
-    if not quiet:
-        print(f"Wrote Markdown: {md_path}")
-        print(f"Wrote HTML: {html_path}")
-        print(f"Wrote YAML: {yaml_path}")
-        print(f"Rows: {len(rows)}")
+        if not quiet:
+            print(f"Wrote Markdown: {md_path}")
+            print(f"Wrote HTML: {html_path}")
+            print(f"Wrote YAML: {yaml_path}")
+            print(f"Rows: {len(rows)}")
 
 
 def is_benchmark_result_dir(path):
@@ -789,51 +830,55 @@ def get_process_tracking_path(benchmark_root=BENCHMARK_DNAME):
 
 
 def load_tracked_process_ids(benchmark_root=BENCHMARK_DNAME):
-    tracking_path = get_process_tracking_path(benchmark_root)
-    if not tracking_path.exists():
-        return []
+    with _PROCESS_TRACKING_LOCK:
+        tracking_path = get_process_tracking_path(benchmark_root)
+        if not tracking_path.exists():
+            return []
 
-    try:
-        payload = json.loads(tracking_path.read_text(encoding="utf-8"))
-    except (OSError, JSONDecodeError):
-        return []
-
-    if not isinstance(payload, list):
-        return []
-
-    process_ids = []
-    for value in payload:
         try:
-            pid = int(value)
-        except (TypeError, ValueError):
-            continue
-        if pid > 0:
-            process_ids.append(pid)
-    return sorted(set(process_ids))
+            payload = json.loads(tracking_path.read_text(encoding="utf-8"))
+        except (OSError, JSONDecodeError):
+            return []
+
+        if not isinstance(payload, list):
+            return []
+
+        process_ids = []
+        for value in payload:
+            try:
+                pid = int(value)
+            except (TypeError, ValueError):
+                continue
+            if pid > 0:
+                process_ids.append(pid)
+        return sorted(set(process_ids))
 
 
 def save_tracked_process_ids(process_ids, benchmark_root=BENCHMARK_DNAME):
-    tracking_path = get_process_tracking_path(benchmark_root)
-    tracking_path.parent.mkdir(parents=True, exist_ok=True)
-    unique_ids = sorted({int(pid) for pid in process_ids if int(pid) > 0})
-    if not unique_ids:
-        try:
-            tracking_path.unlink()
-        except FileNotFoundError:
-            pass
-        return
-    tracking_path.write_text(json.dumps(unique_ids), encoding="utf-8")
+    with _PROCESS_TRACKING_LOCK:
+        tracking_path = get_process_tracking_path(benchmark_root)
+        tracking_path.parent.mkdir(parents=True, exist_ok=True)
+        unique_ids = sorted({int(pid) for pid in process_ids if int(pid) > 0})
+        if not unique_ids:
+            try:
+                tracking_path.unlink()
+            except FileNotFoundError:
+                pass
+            return
+        write_text_atomic(tracking_path, json.dumps(unique_ids), encoding="utf-8")
 
 
 def register_tracked_process(pid, benchmark_root=BENCHMARK_DNAME):
-    process_ids = load_tracked_process_ids(benchmark_root)
-    process_ids.append(pid)
-    save_tracked_process_ids(process_ids, benchmark_root)
+    with _PROCESS_TRACKING_LOCK:
+        process_ids = load_tracked_process_ids(benchmark_root)
+        process_ids.append(pid)
+        save_tracked_process_ids(process_ids, benchmark_root)
 
 
 def unregister_tracked_process(pid, benchmark_root=BENCHMARK_DNAME):
-    process_ids = [value for value in load_tracked_process_ids(benchmark_root) if value != pid]
-    save_tracked_process_ids(process_ids, benchmark_root)
+    with _PROCESS_TRACKING_LOCK:
+        process_ids = [value for value in load_tracked_process_ids(benchmark_root) if value != pid]
+        save_tracked_process_ids(process_ids, benchmark_root)
 
 
 def terminate_process_tree(pid, force=False):
@@ -1170,6 +1215,7 @@ def run_benchmark_for_model(
     rate_limit_retries,
     rate_limit_backoff_initial,
     rate_limit_backoff_max,
+    report_mode,
     exercises_dir,
     commit_hash,
 ):
@@ -1266,6 +1312,20 @@ def run_benchmark_for_model(
         total=len(test_dnames),
         status=f"threads={threads}",
     )
+    worker_task_ids = []
+    if threads > 1:
+        model_label = model.rsplit("/", 1)[-1]
+        worker_task_ids = [
+            add_benchmark_task(
+                f"{model_label} worker {index + 1}",
+                total=1,
+                status="idle",
+                visible=False,
+            )
+            for index in range(threads)
+        ]
+
+    live_reports = report_mode == "live"
 
     try:
         if threads == 1:
@@ -1299,8 +1359,8 @@ def run_benchmark_for_model(
 
                 all_results.append(results)
                 update_benchmark_task(progress_task, advance=1, status=f"done {Path(test_path).name}")
-                summarize_results(dirname, quiet=not verbose)
-                write_aggregate_reports_for_progress(dirname, quiet=not verbose)
+                if live_reports:
+                    refresh_progress_artifacts(dirname, quiet=not verbose)
                 if sleep:
                     cancel_aware_sleep(sleep)
         else:
@@ -1308,48 +1368,87 @@ def run_benchmark_for_model(
             cancelled = False
             executor = ThreadPoolExecutor(max_workers=threads)
             try:
-                futures = []
+                available_slots = list(range(threads))
+                available_slots_lock = threading.Lock()
+
+                def acquire_worker_slot():
+                    with available_slots_lock:
+                        if available_slots:
+                            return available_slots.pop(0)
+                    return None
+
+                def release_worker_slot(slot_index):
+                    if slot_index is None:
+                        return
+                    with available_slots_lock:
+                        available_slots.append(slot_index)
+                        available_slots.sort()
+
+                def run_test_in_worker_slot(test_path):
+                    slot_index = acquire_worker_slot()
+                    worker_task_id = None if slot_index is None else worker_task_ids[slot_index]
+                    try:
+                        update_benchmark_task(
+                            worker_task_id,
+                            completed=0,
+                            total=1,
+                            visible=True,
+                            status=f"running {Path(test_path).name}",
+                        )
+                        return run_test(
+                            original_dname,
+                            dirname / test_path,
+                            model,
+                            edit_format,
+                            tries,
+                            no_unit_tests,
+                            no_aider,
+                            verbose,
+                            commit_hash,
+                            replay,
+                            editor_model,
+                            editor_edit_format,
+                            num_ctx,
+                            sleep,
+                            reasoning_effort,
+                            thinking_tokens,
+                            max_llm_concurrency,
+                            rate_limit_retries,
+                            rate_limit_backoff_initial,
+                            rate_limit_backoff_max,
+                        )
+                    finally:
+                        update_benchmark_task(
+                            worker_task_id,
+                            completed=0,
+                            visible=False,
+                            status="idle",
+                        )
+                        release_worker_slot(slot_index)
+
+                futures = {}
                 for test_path in test_dnames:
                     if _CANCEL_EVENT.is_set():
                         cancelled = True
                         break
                     update_benchmark_task(progress_task, status=f"queued {Path(test_path).name}")
                     future = executor.submit(
-                        run_test,
-                        original_dname,
-                        dirname / test_path,
-                        model,
-                        edit_format,
-                        tries,
-                        no_unit_tests,
-                        no_aider,
-                        verbose,
-                        commit_hash,
-                        replay,
-                        editor_model,
-                        editor_edit_format,
-                        num_ctx,
-                        sleep,
-                        reasoning_effort,
-                        thinking_tokens,
-                        max_llm_concurrency,
-                        rate_limit_retries,
-                        rate_limit_backoff_initial,
-                        rate_limit_backoff_max,
+                        run_test_in_worker_slot,
+                        test_path,
                     )
-                    futures.append(future)
+                    futures[future] = test_path
 
-                for future in futures:
+                for future in as_completed(futures):
                     if _CANCEL_EVENT.is_set():
                         cancelled = True
                         break
                     try:
                         result = future.result()
                         all_results.append(result)
-                        test_name = Path(result.get("testcase", "case")).name if result else "case"
+                        test_name = Path(result.get("testcase", "case")).name if result else Path(futures[future]).name
                         update_benchmark_task(progress_task, advance=1, status=f"done {test_name}")
-                        summarize_results(dirname, quiet=not verbose)
-                        write_aggregate_reports_for_progress(dirname, quiet=not verbose)
+                        if live_reports:
+                            refresh_progress_artifacts(dirname, quiet=not verbose)
                     except BenchmarkCancelled:
                         _CANCEL_EVENT.set()
                         cancelled = True
@@ -1374,6 +1473,8 @@ def run_benchmark_for_model(
         return 2
 
     update_benchmark_task(progress_task, status="complete")
+    for worker_task_id in worker_task_ids:
+        update_benchmark_task(worker_task_id, visible=False, status="complete")
     if verbose:
         print()
         print()
@@ -1491,6 +1592,11 @@ def main(
         "--model-parallelism",
         help="How many selected models to run in parallel. Defaults to 1.",
     ),
+    report_mode: str = typer.Option(
+        "auto",
+        "--report-mode",
+        help="Report refresh strategy: auto chooses end-only for parallel runs and live for serial runs; use live or end to force behavior.",
+    ),
     exercises_dir: str = typer.Option(
         EXERCISES_DIR_DEFAULT,
         "--exercises-dir",
@@ -1600,6 +1706,11 @@ def main(
 
     llm_concurrency = resolve_llm_concurrency(threads, max_llm_concurrency)
     max_model_parallelism = resolve_model_parallelism(model_names, model_parallelism)
+    try:
+        effective_report_mode = resolve_report_mode(report_mode, threads, max_model_parallelism, len(model_names))
+    except ValueError as exc:
+        print(exc)
+        raise typer.Exit(code=1)
     model_runs = list(zip(model_names, run_dirnames))
 
     cancelled_models = set()
@@ -1636,6 +1747,7 @@ def main(
                         rate_limit_retries,
                         rate_limit_backoff_initial,
                         rate_limit_backoff_max,
+                        effective_report_mode,
                         exercises_dir,
                         commit_hash,
                     )
@@ -1674,13 +1786,14 @@ def main(
                             rate_limit_retries,
                             rate_limit_backoff_initial,
                             rate_limit_backoff_max,
+                            effective_report_mode,
                             exercises_dir,
                             commit_hash,
                         ): model_name
                         for model_name, run_dirname in model_runs
                     }
 
-                    for future in futures:
+                    for future in as_completed(futures):
                         if _CANCEL_EVENT.is_set():
                             cancelled_models.add(futures[future])
                             cancelled = True
@@ -2061,7 +2174,7 @@ def run_test(original_dname, testdir, *args, **kwargs):
 
         testdir = Path(testdir)
         results_fname = testdir / ".aider.results.json"
-        results_fname.write_text(json.dumps(dict(exception=traceback.format_exc())))
+        write_text_atomic(results_fname, json.dumps(dict(exception=traceback.format_exc())))
 
 
 def run_test_real(
@@ -2382,7 +2495,7 @@ def run_test_real(
     if verbose:
         dump(results)
 
-    results_fname.write_text(json.dumps(results, indent=4))
+    write_text_atomic(results_fname, json.dumps(results, indent=4))
 
     return results
 
