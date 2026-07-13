@@ -877,6 +877,42 @@ def kill_tracked_processes(benchmark_root=BENCHMARK_DNAME, force=True):
     return SimpleNamespace(killed=killed, failed=failed)
 
 
+def kill_known_benchmark_locking_processes(force=True):
+    killed = []
+    failed = []
+
+    if os.name == "nt":
+        image_names = [
+            "dotnet.exe",
+            "MSBuild.exe",
+            "testhost.exe",
+            "vstest.console.exe",
+            "VBCSCompiler.exe",
+        ]
+        for image_name in image_names:
+            command = ["taskkill", "/IM", image_name, "/T"]
+            if force:
+                command.append("/F")
+            result = subprocess.run(command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
+            if result.returncode == 0:
+                killed.append(image_name)
+            else:
+                failed.append(image_name)
+    else:
+        process_names = ["dotnet", "MSBuild", "testhost", "vstest.console", "VBCSCompiler"]
+        for process_name in process_names:
+            command = ["pkill", "-f", process_name]
+            if not force:
+                command.insert(1, "-TERM")
+            result = subprocess.run(command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
+            if result.returncode == 0:
+                killed.append(process_name)
+            else:
+                failed.append(process_name)
+
+    return SimpleNamespace(killed=killed, failed=failed)
+
+
 def stage_dir_for_cleanup_with_retries(path, benchmark_root, attempts=3, delay_seconds=0.1):
     for attempt in range(attempts):
         try:
@@ -978,13 +1014,64 @@ def hard_cleanup_benchmark_artifacts(dirnames=None, benchmark_root=BENCHMARK_DNA
         include_staged_dirs=True,
     )
 
+    if dirnames is None:
+        remaining_candidates = [
+            path for path in benchmark_root.iterdir()
+            if is_benchmark_result_dir(path) or is_staged_cleanup_dir(path)
+        ]
+    else:
+        remaining_candidates = [
+            Path(dirname) for dirname in dirnames
+            if Path(dirname).exists()
+        ]
+
+    forced_removed_dirs = []
+    forced_skipped_dirs = []
+    for candidate in remaining_candidates:
+        cleanup_target = candidate
+        if candidate.exists() and is_benchmark_result_dir(candidate):
+            staged = stage_dir_for_cleanup_with_retries(candidate, benchmark_root)
+            if staged is not None:
+                cleanup_target = staged
+        if remove_tree_with_retries(cleanup_target, attempts=5, delay_seconds=0.2):
+            forced_removed_dirs.append(candidate)
+        else:
+            forced_skipped_dirs.append(candidate)
+
+    if forced_skipped_dirs:
+        known_process_summary = kill_known_benchmark_locking_processes(force=True)
+        kill_summary.killed.extend(name for name in known_process_summary.killed if name not in kill_summary.killed)
+        kill_summary.failed.extend(name for name in known_process_summary.failed if name not in kill_summary.failed)
+
+        retried_skipped_dirs = []
+        for candidate in forced_skipped_dirs:
+            cleanup_target = candidate
+            if candidate.exists() and is_benchmark_result_dir(candidate):
+                staged = stage_dir_for_cleanup_with_retries(candidate, benchmark_root, attempts=5, delay_seconds=0.2)
+                if staged is not None:
+                    cleanup_target = staged
+            if remove_tree_with_retries(cleanup_target, attempts=5, delay_seconds=0.2):
+                if candidate not in forced_removed_dirs:
+                    forced_removed_dirs.append(candidate)
+            else:
+                retried_skipped_dirs.append(candidate)
+        forced_skipped_dirs = retried_skipped_dirs
+
     removed_files = cleanup_summary.removed_files + [
         path for path in second_pass_summary.removed_files if path not in cleanup_summary.removed_files
     ]
     removed_dirs = cleanup_summary.removed_dirs + [
         path for path in second_pass_summary.removed_dirs if path not in cleanup_summary.removed_dirs
     ]
-    skipped_dirs = second_pass_summary.skipped_dirs or cleanup_summary.skipped_dirs
+    for path in forced_removed_dirs:
+        if path not in removed_dirs:
+            removed_dirs.append(path)
+
+    skipped_dirs = []
+    for collection in (cleanup_summary.skipped_dirs, second_pass_summary.skipped_dirs, forced_skipped_dirs):
+        for path in collection:
+            if path not in skipped_dirs:
+                skipped_dirs.append(path)
 
     return SimpleNamespace(
         removed_files=removed_files,
@@ -1357,12 +1444,12 @@ def main(
     purge: bool = typer.Option(
         False,
         "--purge",
-        help="Delete selected benchmark run dirs and generated aggregate report files, then exit",
+        help="Hard delete selected benchmark run dirs and generated aggregate report files, killing tracked child processes and retrying locked paths, then exit",
     ),
     hard_purge: bool = typer.Option(
         False,
         "--hard-purge",
-        help="Kill tracked benchmark child processes, remove staged cleanup dirs, and retry deletion until benchmark artifacts are gone",
+        help="Alias for --purge. Kill tracked benchmark child processes, remove staged cleanup dirs, and retry deletion until benchmark artifacts are gone",
     ),
     tries: int = typer.Option(2, "--tries", "-r", help="Number of tries for running tests"),
     threads: int = typer.Option(1, "--threads", "-t", help="Number of threads to run in parallel"),
@@ -1456,7 +1543,7 @@ def main(
         return 0
 
     if purge or hard_purge:
-        cleanup_summary = hard_cleanup_benchmark_artifacts(updated_dirnames or None) if hard_purge else cleanup_benchmark_artifacts(updated_dirnames or None)
+        cleanup_summary = hard_cleanup_benchmark_artifacts(updated_dirnames or None)
         for removed_dir in cleanup_summary.removed_dirs:
             print(f"Removed benchmark dir: {removed_dir}")
         for removed_file in cleanup_summary.removed_files:

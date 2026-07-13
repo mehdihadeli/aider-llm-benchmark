@@ -288,6 +288,34 @@
 			"command": "uv run python -c \"from pathlib import Path; from aider_polyglot_benchmark.benchmark import hard_cleanup_benchmark_artifacts, BENCHMARK_DNAME, is_benchmark_result_dir; root=BENCHMARK_DNAME; print('before=', [(p.name, p.is_dir(), is_benchmark_result_dir(p)) for p in root.iterdir()]); summary=hard_cleanup_benchmark_artifacts(); print('removed=', [p.name for p in summary.removed_dirs]); print('skipped=', [p.name for p in summary.skipped_dirs]); print('killed=', summary.killed_processes); print('failed=', summary.failed_processes); print('after=', [p.name for p in root.iterdir()])\"",
 			"isBackground": false,
 			"group": "test"
+		},
+		{
+			"label": "Diagnose purge failure path",
+			"type": "shell",
+			"command": "uv run python -c \"from pathlib import Path; from aider_polyglot_benchmark.benchmark import BENCHMARK_DNAME, stage_dir_for_cleanup_with_retries, remove_tree_with_retries; root=BENCHMARK_DNAME; target=next(p for p in root.iterdir() if p.is_dir()); print('target=', target); staged=stage_dir_for_cleanup_with_retries(target, root, attempts=1, delay_seconds=0.0); print('staged=', staged); actual=staged or target; print('exists_before_remove=', actual.exists()); print('remove_ok=', remove_tree_with_retries(actual, attempts=1, delay_seconds=0.0)); print('exists_after_remove=', actual.exists()); print('root_after=', [p.name for p in root.iterdir()])\"",
+			"isBackground": false,
+			"group": "test"
+		},
+		{
+			"label": "Revalidate hard purge CLI",
+			"type": "shell",
+			"command": "uv run benchmark --model github_copilot/gpt-4 --languages csharp --num-tests 1 --unsafe --no-aider --no-unit-tests && uv run benchmark --hard-purge && uv run python -c \"from pathlib import Path; root=Path('tmp.benchmarks'); print(sorted(p.name for p in root.iterdir()) if root.exists() else [])\"",
+			"isBackground": false,
+			"group": "test"
+		},
+		{
+			"label": "Final hard purge validation",
+			"type": "shell",
+			"command": "uv run benchmark --model github_copilot/gpt-4 --languages csharp --num-tests 1 --unsafe --no-aider --no-unit-tests && uv run benchmark --hard-purge && uv run python -c \"from pathlib import Path; root=Path('tmp.benchmarks'); print(sorted(p.name for p in root.iterdir()) if root.exists() else [])\"",
+			"isBackground": false,
+			"group": "test"
+		},
+		{
+			"label": "List after hard purge direct",
+			"type": "shell",
+			"command": "uv run benchmark --hard-purge && uv run python -c \"from pathlib import Path; root=Path('tmp.benchmarks'); print(sorted(p.name for p in root.iterdir()) if root.exists() else [])\"",
+			"isBackground": false,
+			"group": "test"
 		}
 	]
 }
