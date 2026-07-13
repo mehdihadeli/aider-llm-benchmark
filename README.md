@@ -146,6 +146,14 @@ Prerequisites:
 - use Python `3.11` or newer; the recommended local setup below uses Python `3.12`
 - Docker in this repo currently uses Python `3.11`, which is also supported by the package metadata
 
+If your shell was previously using another repo's virtual environment, clear it first to avoid
+`uv` warnings about `VIRTUAL_ENV` not matching this project's `.venv`:
+
+```bash
+deactivate 2>/dev/null || true
+unset VIRTUAL_ENV
+```
+
 Provision a compatible Python environment and install dependencies once:
 
 ```bash
@@ -458,8 +466,11 @@ to open <https://github.com/login/device>, enter the code, and authorize the
 request. After authorization, credentials are cached locally and reused for
 future runs.
 
-```bash
+If you omit the leading run name, `benchmark` derives one from the selected model
+names. For example, this uses a base run name like `gpt-4_gpt-4.1_kimi`:
 
+```bash
+uv run benchmark --model github_copilot/gpt-4   --model github_copilot/kimi --languages csharp --num-tests 3 --unsafe
 ```
 
 #### OpenRouter

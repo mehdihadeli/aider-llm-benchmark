@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import datetime
+import io as io_module
 import json
 import os
 import random
@@ -14,6 +15,7 @@ import time
 import traceback
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager, nullcontext, redirect_stdout
 from importlib import metadata as importlib_metadata
 from pathlib import Path
 from json.decoder import JSONDecodeError
@@ -104,6 +106,7 @@ try:
     from aider_polyglot_benchmark import leaderboard_report, prompts
     from dotenv import load_dotenv
     from rich.console import Console
+    from rich.progress import BarColumn, Progress, SpinnerColumn, TextColumn, TimeElapsedColumn, TimeRemainingColumn
 
     load_dotenv(override=True)
 
@@ -124,7 +127,11 @@ BENCHMARK_REPORT_FILENAMES = (
     "leaderboard.html",
     "polyglot_leaderboard.yml",
 )
+BENCHMARK_PROCESS_TRACKING_FILENAME = ".benchmark-pids.json"
 BENCHMARK_RUN_DIR_RE = re.compile(r"^\d{4}-\d{2}-\d{2}-\d{2}-\d{2}-\d{2}--")
+BENCHMARK_CONSOLE = Console(stderr=True, highlight=False)
+_BENCHMARK_PROGRESS = None
+_BENCHMARK_PROGRESS_LOCK = threading.RLock()
 
 EXERCISES_DIR_DEFAULT = "exercises"
 LEGACY_EXERCISES_DIR_DEFAULT = "exercism-tracks"
@@ -160,6 +167,71 @@ app = typer.Typer(
     pretty_exceptions_enable=False,
     help=MAIN_HELP,
 )
+
+
+def quiet_output(verbose):
+    if verbose:
+        return nullcontext()
+    return redirect_stdout(io_module.StringIO())
+
+
+def benchmark_print(message="", style=None):
+    BENCHMARK_CONSOLE.print(message, style=style)
+
+
+def make_benchmark_progress():
+    return Progress(
+        SpinnerColumn(),
+        TextColumn("[bold cyan]{task.description}"),
+        BarColumn(),
+        TextColumn("{task.completed}/{task.total}"),
+        TimeElapsedColumn(),
+        TimeRemainingColumn(),
+        TextColumn("{task.fields[status]}"),
+        console=BENCHMARK_CONSOLE,
+        transient=False,
+    )
+
+
+@contextmanager
+def benchmark_progress(enabled=True):
+    global _BENCHMARK_PROGRESS
+    if not enabled:
+        yield None
+        return
+
+    with _BENCHMARK_PROGRESS_LOCK:
+        if _BENCHMARK_PROGRESS is not None:
+            yield _BENCHMARK_PROGRESS
+            return
+
+        progress = make_benchmark_progress()
+        _BENCHMARK_PROGRESS = progress
+
+    try:
+        with progress:
+            yield progress
+    finally:
+        with _BENCHMARK_PROGRESS_LOCK:
+            if _BENCHMARK_PROGRESS is progress:
+                _BENCHMARK_PROGRESS = None
+
+
+def add_benchmark_task(description, total, status="queued"):
+    with _BENCHMARK_PROGRESS_LOCK:
+        if _BENCHMARK_PROGRESS is None:
+            return None
+        return _BENCHMARK_PROGRESS.add_task(description, total=total, status=status)
+
+
+def update_benchmark_task(task_id, advance=0, status=None):
+    with _BENCHMARK_PROGRESS_LOCK:
+        if _BENCHMARK_PROGRESS is None or task_id is None:
+            return
+        kwargs = {"advance": advance}
+        if status is not None:
+            kwargs["status"] = status
+        _BENCHMARK_PROGRESS.update(task_id, **kwargs)
 
 
 def find_latest_benchmark_dir():
@@ -276,11 +348,11 @@ def write_benchmark_report(dirname, report):
     return report_path
 
 
-def write_aggregate_reports_for_progress(dirname):
+def write_aggregate_reports_for_progress(dirname, quiet=False):
     try:
-        write_aggregate_reports([dirname])
+        write_aggregate_reports([dirname], quiet=quiet)
     except Exception as exc:
-        print(f"Warning: failed to update aggregate reports: {exc}")
+        benchmark_print(f"Warning: failed to update aggregate reports: {exc}", style="yellow")
 
 
 def safe_console_rule(console, title=None):
@@ -340,13 +412,13 @@ def resolve_exercises_dir(exercises_dir):
     return candidates[0] if candidates else exercises_path
 
 
-def resolve_dirname(dirname, use_single_prior, make_new):
+def resolve_dirname(dirname, use_single_prior, make_new, choose_latest_prior=False):
     if len(dirname.parts) > 1:
         return dirname
 
     priors = list(BENCHMARK_DNAME.glob(f"*--{dirname}"))
-    if len(priors) == 1 and use_single_prior:
-        dirname = priors[0].name
+    if priors and use_single_prior and (len(priors) == 1 or choose_latest_prior):
+        dirname = sorted(priors, key=lambda path: path.name)[-1].name
         print(f"Using pre-existing {dirname}")
     elif len(priors):
         if not make_new:
@@ -379,14 +451,40 @@ def slugify_model_name(model_name):
     return slug or "model"
 
 
-def build_model_dirnames(base_dirname, model_names):
+def build_default_run_name(model_names):
+    parts = []
+    for model_name in model_names:
+        model_leaf = model_name.rsplit("/", 1)[-1]
+        parts.append(slugify_model_name(model_leaf))
+
+    return "_".join(parts) or "benchmark"
+
+
+def build_model_dirnames(base_dirname, model_names, use_base_dirname_for_first=False):
     if len(model_names) == 1:
         return [base_dirname]
 
     dirnames = []
     seen = set()
     for model_name in model_names:
-        dirname = base_dirname.parent / f"{base_dirname.name}--{slugify_model_name(model_name)}"
+        model_slug_source = model_name.rsplit("/", 1)[-1] if use_base_dirname_for_first else model_name
+        dirname = base_dirname.parent / f"{base_dirname.name}--{slugify_model_name(model_slug_source)}"
+        if dirname in seen:
+            raise ValueError(f"Duplicate output directory for model: {model_name}")
+        seen.add(dirname)
+        dirnames.append(dirname)
+
+    return dirnames
+
+
+def build_generated_model_dirnames(model_names):
+    timestamp = datetime.datetime.now().strftime("%Y-%m-%d-%H-%M-%S--")
+    dirnames = []
+    seen = set()
+
+    for model_name in model_names:
+        model_slug = slugify_model_name(model_name.rsplit("/", 1)[-1])
+        dirname = BENCHMARK_DNAME / f"{timestamp}{model_slug}"
         if dirname in seen:
             raise ValueError(f"Duplicate output directory for model: {model_name}")
         seen.add(dirname)
@@ -567,7 +665,10 @@ def run_single_model_benchmark(
     exercises_dir,
     commit_hash,
 ):
-    print(f"Running benchmark for model: {model_name}")
+    if verbose:
+        print(f"Running benchmark for model: {model_name}")
+    else:
+        benchmark_print(f"Running benchmark for model: {model_name}", style="bold cyan")
     return run_benchmark_for_model(
         run_dirname,
         model_name,
@@ -598,17 +699,19 @@ def run_single_model_benchmark(
     )
 
 
-def write_aggregate_reports(dirnames=None, stats_languages=None, write_empty_yaml=False):
+def write_aggregate_reports(dirnames=None, stats_languages=None, write_empty_yaml=False, quiet=False):
     from aider_polyglot_benchmark import leaderboard_report
 
     dirnames = leaderboard_report.find_benchmark_dirs(dirnames)
     rows = leaderboard_report.build_rows(dirnames, stats_languages=stats_languages)
     yaml_path = leaderboard_report.BENCHMARK_ROOT / "polyglot_leaderboard.yml"
     if not rows:
-        print("No benchmark results found to aggregate.")
+        if not quiet:
+            print("No benchmark results found to aggregate.")
         if write_empty_yaml:
             leaderboard_report.write_yaml([], yaml_path)
-            print(f"Wrote YAML: {yaml_path}")
+            if not quiet:
+                print(f"Wrote YAML: {yaml_path}")
         return
 
     yaml_entries = leaderboard_report.build_yaml_entries(dirnames, stats_languages=stats_languages)
@@ -619,14 +722,19 @@ def write_aggregate_reports(dirnames=None, stats_languages=None, write_empty_yam
     leaderboard_report.render_html(rows, html_path, "LLMs BenchmarkLLM Leaderboards")
     leaderboard_report.write_yaml(yaml_entries, yaml_path)
 
-    print(f"Wrote Markdown: {md_path}")
-    print(f"Wrote HTML: {html_path}")
-    print(f"Wrote YAML: {yaml_path}")
-    print(f"Rows: {len(rows)}")
+    if not quiet:
+        print(f"Wrote Markdown: {md_path}")
+        print(f"Wrote HTML: {html_path}")
+        print(f"Wrote YAML: {yaml_path}")
+        print(f"Rows: {len(rows)}")
 
 
 def is_benchmark_result_dir(path):
     return path.is_dir() and bool(BENCHMARK_RUN_DIR_RE.match(path.name))
+
+
+def is_staged_cleanup_dir(path):
+    return path.is_dir() and path.name.startswith(".deleting-")
 
 
 def _is_relative_to(path, parent):
@@ -650,13 +758,143 @@ def remove_tree(path):
     shutil.rmtree(path, onerror=_remove_readonly_and_retry)
 
 
-def cleanup_benchmark_artifacts(dirnames=None, benchmark_root=BENCHMARK_DNAME):
+def remove_tree_with_retries(path, attempts=3, delay_seconds=0.1):
+    for attempt in range(attempts):
+        try:
+            remove_tree(path)
+        except OSError:
+            if attempt == attempts - 1:
+                return False
+        if not Path(path).exists():
+            return True
+        if attempt < attempts - 1:
+            cancel_aware_sleep(delay_seconds * (attempt + 1))
+    return not Path(path).exists()
+
+
+def stage_dir_for_cleanup(path, benchmark_root):
+    path = Path(path)
+    benchmark_root = Path(benchmark_root)
+    staged = benchmark_root / f".deleting-{path.name}"
+    counter = 1
+    while staged.exists():
+        staged = benchmark_root / f".deleting-{counter}-{path.name}"
+        counter += 1
+    path.rename(staged)
+    return staged
+
+
+def get_process_tracking_path(benchmark_root=BENCHMARK_DNAME):
+    return Path(benchmark_root) / BENCHMARK_PROCESS_TRACKING_FILENAME
+
+
+def load_tracked_process_ids(benchmark_root=BENCHMARK_DNAME):
+    tracking_path = get_process_tracking_path(benchmark_root)
+    if not tracking_path.exists():
+        return []
+
+    try:
+        payload = json.loads(tracking_path.read_text(encoding="utf-8"))
+    except (OSError, JSONDecodeError):
+        return []
+
+    if not isinstance(payload, list):
+        return []
+
+    process_ids = []
+    for value in payload:
+        try:
+            pid = int(value)
+        except (TypeError, ValueError):
+            continue
+        if pid > 0:
+            process_ids.append(pid)
+    return sorted(set(process_ids))
+
+
+def save_tracked_process_ids(process_ids, benchmark_root=BENCHMARK_DNAME):
+    tracking_path = get_process_tracking_path(benchmark_root)
+    tracking_path.parent.mkdir(parents=True, exist_ok=True)
+    unique_ids = sorted({int(pid) for pid in process_ids if int(pid) > 0})
+    if not unique_ids:
+        try:
+            tracking_path.unlink()
+        except FileNotFoundError:
+            pass
+        return
+    tracking_path.write_text(json.dumps(unique_ids), encoding="utf-8")
+
+
+def register_tracked_process(pid, benchmark_root=BENCHMARK_DNAME):
+    process_ids = load_tracked_process_ids(benchmark_root)
+    process_ids.append(pid)
+    save_tracked_process_ids(process_ids, benchmark_root)
+
+
+def unregister_tracked_process(pid, benchmark_root=BENCHMARK_DNAME):
+    process_ids = [value for value in load_tracked_process_ids(benchmark_root) if value != pid]
+    save_tracked_process_ids(process_ids, benchmark_root)
+
+
+def terminate_process_tree(pid, force=False):
+    try:
+        pid = int(pid)
+    except (TypeError, ValueError):
+        return False
+
+    if pid <= 0:
+        return False
+
+    if os.name == "nt":
+        command = ["taskkill", "/PID", str(pid), "/T"]
+        if force:
+            command.append("/F")
+        result = subprocess.run(command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
+        return result.returncode == 0
+
+    sig = signal.SIGKILL if force else signal.SIGTERM
+    try:
+        os.killpg(os.getpgid(pid), sig)
+        return True
+    except OSError:
+        try:
+            os.kill(pid, sig)
+            return True
+        except OSError:
+            return False
+
+
+def kill_tracked_processes(benchmark_root=BENCHMARK_DNAME, force=True):
+    process_ids = load_tracked_process_ids(benchmark_root)
+    killed = []
+    failed = []
+    for pid in process_ids:
+        if terminate_process_tree(pid, force=force):
+            killed.append(pid)
+        else:
+            failed.append(pid)
+    save_tracked_process_ids([], benchmark_root)
+    return SimpleNamespace(killed=killed, failed=failed)
+
+
+def stage_dir_for_cleanup_with_retries(path, benchmark_root, attempts=3, delay_seconds=0.1):
+    for attempt in range(attempts):
+        try:
+            return stage_dir_for_cleanup(path, benchmark_root)
+        except OSError:
+            if attempt == attempts - 1:
+                return None
+            cancel_aware_sleep(delay_seconds * (attempt + 1))
+    return None
+
+
+def cleanup_benchmark_artifacts(dirnames=None, benchmark_root=BENCHMARK_DNAME, include_staged_dirs=False):
     benchmark_root = Path(benchmark_root)
     removed_files = []
     removed_dirs = []
     skipped_dirs = []
 
-    for filename in BENCHMARK_REPORT_FILENAMES:
+    for filename in (*BENCHMARK_REPORT_FILENAMES, BENCHMARK_PROCESS_TRACKING_FILENAME):
         report_path = benchmark_root / filename
         if report_path.exists():
             report_path.unlink()
@@ -670,7 +908,10 @@ def cleanup_benchmark_artifacts(dirnames=None, benchmark_root=BENCHMARK_DNAME):
                 skipped_dirs=skipped_dirs,
             )
 
-        candidates = [path for path in benchmark_root.iterdir() if is_benchmark_result_dir(path)]
+        candidates = []
+        for path in benchmark_root.iterdir():
+            if is_benchmark_result_dir(path) or (include_staged_dirs and is_staged_cleanup_dir(path)):
+                candidates.append(path)
     else:
         candidates = [Path(dirname) for dirname in dirnames]
 
@@ -686,9 +927,11 @@ def cleanup_benchmark_artifacts(dirnames=None, benchmark_root=BENCHMARK_DNAME):
             skipped_dirs.append(candidate)
             continue
 
-        try:
-            remove_tree(candidate)
-        except OSError:
+        cleanup_target = stage_dir_for_cleanup_with_retries(candidate, benchmark_root)
+        if cleanup_target is None:
+            cleanup_target = candidate
+
+        if not remove_tree_with_retries(cleanup_target):
             skipped_dirs.append(candidate)
             continue
         removed_dirs.append(candidate)
@@ -697,6 +940,58 @@ def cleanup_benchmark_artifacts(dirnames=None, benchmark_root=BENCHMARK_DNAME):
         removed_files=removed_files,
         removed_dirs=removed_dirs,
         skipped_dirs=skipped_dirs,
+    )
+
+
+def cleanup_duplicate_named_runs(dirname, benchmark_root=BENCHMARK_DNAME):
+    dirname = Path(dirname)
+    if len(dirname.parts) > 1:
+        suffix = dirname.name.split("--", 1)[-1]
+        keep_path = dirname
+    else:
+        suffix = dirname.name
+        keep_matches = sorted(Path(benchmark_root).glob(f"*--{suffix}"), key=lambda path: path.name)
+        keep_path = keep_matches[-1] if keep_matches else None
+
+    if keep_path is None:
+        return SimpleNamespace(removed_dirs=[], skipped_dirs=[])
+
+    duplicates = [
+        path for path in Path(benchmark_root).glob(f"*--{suffix}")
+        if path != keep_path and path.is_dir()
+    ]
+    summary = cleanup_benchmark_artifacts(duplicates, benchmark_root=benchmark_root)
+    return SimpleNamespace(removed_dirs=summary.removed_dirs, skipped_dirs=summary.skipped_dirs)
+
+
+def hard_cleanup_benchmark_artifacts(dirnames=None, benchmark_root=BENCHMARK_DNAME):
+    benchmark_root = Path(benchmark_root)
+    kill_summary = kill_tracked_processes(benchmark_root)
+    cleanup_summary = cleanup_benchmark_artifacts(
+        dirnames,
+        benchmark_root=benchmark_root,
+        include_staged_dirs=True,
+    )
+    second_pass_summary = cleanup_benchmark_artifacts(
+        dirnames,
+        benchmark_root=benchmark_root,
+        include_staged_dirs=True,
+    )
+
+    removed_files = cleanup_summary.removed_files + [
+        path for path in second_pass_summary.removed_files if path not in cleanup_summary.removed_files
+    ]
+    removed_dirs = cleanup_summary.removed_dirs + [
+        path for path in second_pass_summary.removed_dirs if path not in cleanup_summary.removed_dirs
+    ]
+    skipped_dirs = second_pass_summary.skipped_dirs or cleanup_summary.skipped_dirs
+
+    return SimpleNamespace(
+        removed_files=removed_files,
+        removed_dirs=removed_dirs,
+        skipped_dirs=skipped_dirs,
+        killed_processes=kill_summary.killed,
+        failed_processes=kill_summary.failed,
     )
 
 
@@ -709,7 +1004,6 @@ def get_exercise_dirs(base_dir, languages=None):
     if languages:
         requested = set(lang.strip().lower() for lang in languages.split(","))
         lang_dirs = [d for d in lang_dirs if d.name.lower() in requested]
-        dump(lang_dirs)
         if not lang_dirs:
             print(f"No matching language directories found for: {languages}")
             return []
@@ -833,27 +1127,35 @@ def run_benchmark_for_model(
 
     if clean and dirname.exists():
         print("Cleaning up and replacing", dirname)
-        dir_files = set(fn.name for fn in dirname.glob("*"))
-        original_files = set(fn.name for fn in original_dname.glob("*"))
-        if dir_files != original_files:
-            print("ERROR: will not delete dir that does not look like original tests", dirname)
-            return 1
+        if _is_relative_to(dirname, BENCHMARK_DNAME) and is_benchmark_result_dir(dirname):
+            if not remove_tree_with_retries(dirname):
+                print("ERROR: failed to delete benchmark run dir", dirname)
+                return 1
+        else:
+            dir_files = set(fn.name for fn in dirname.glob("*"))
+            original_files = set(fn.name for fn in original_dname.glob("*"))
+            if dir_files != original_files:
+                print("ERROR: will not delete dir that does not look like original tests", dirname)
+                return 1
 
-        dest = dirname.parent / "OLD" / dirname.name
-        if dest.exists():
-            old_now = datetime.datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
-            dest = dirname.parent / "OLD" / (old_now + dirname.name)
+            dest = dirname.parent / "OLD" / dirname.name
+            if dest.exists():
+                old_now = datetime.datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
+                dest = dirname.parent / "OLD" / (old_now + dirname.name)
 
-        dirname.rename(dest)
+            dirname.rename(dest)
 
     if not dirname.exists():
-        print(f"Copying {original_dname} -> {dirname} ...")
+        if verbose:
+            print(f"Copying {original_dname} -> {dirname} ...")
         copy_selected_exercise_dirs(original_dname, dirname, test_dnames)
-        print("...done")
+        if verbose:
+            print("...done")
 
     resource_metadata = importlib_resources.files("aider.resources").joinpath("model-metadata.json")
     model_metadata_files_loaded = models.register_litellm_models([resource_metadata])
-    dump(model_metadata_files_loaded)
+    if verbose:
+        dump(model_metadata_files_loaded)
 
     if read_model_settings:
         try:
@@ -872,12 +1174,19 @@ def run_benchmark_for_model(
     base_coder.RETRY_TIMEOUT = LONG_TIMEOUT
     models.RETRY_TIMEOUT = LONG_TIMEOUT
 
+    progress_task = add_benchmark_task(
+        f"{model}",
+        total=len(test_dnames),
+        status=f"threads={threads}",
+    )
+
     try:
         if threads == 1:
             all_results = []
             for test_path in test_dnames:
                 if _CANCEL_EVENT.is_set():
                     break
+                update_benchmark_task(progress_task, status=f"running {Path(test_path).name}")
                 results = run_test(
                     original_dname,
                     dirname / test_path,
@@ -902,8 +1211,9 @@ def run_benchmark_for_model(
                 )
 
                 all_results.append(results)
-                summarize_results(dirname)
-                write_aggregate_reports_for_progress(dirname)
+                update_benchmark_task(progress_task, advance=1, status=f"done {Path(test_path).name}")
+                summarize_results(dirname, quiet=not verbose)
+                write_aggregate_reports_for_progress(dirname, quiet=not verbose)
                 if sleep:
                     cancel_aware_sleep(sleep)
         else:
@@ -916,6 +1226,7 @@ def run_benchmark_for_model(
                     if _CANCEL_EVENT.is_set():
                         cancelled = True
                         break
+                    update_benchmark_task(progress_task, status=f"queued {Path(test_path).name}")
                     future = executor.submit(
                         run_test,
                         original_dname,
@@ -948,8 +1259,10 @@ def run_benchmark_for_model(
                     try:
                         result = future.result()
                         all_results.append(result)
-                        summarize_results(dirname)
-                        write_aggregate_reports_for_progress(dirname)
+                        test_name = Path(result.get("testcase", "case")).name if result else "case"
+                        update_benchmark_task(progress_task, advance=1, status=f"done {test_name}")
+                        summarize_results(dirname, quiet=not verbose)
+                        write_aggregate_reports_for_progress(dirname, quiet=not verbose)
                     except BenchmarkCancelled:
                         _CANCEL_EVENT.set()
                         cancelled = True
@@ -964,21 +1277,21 @@ def run_benchmark_for_model(
                 shutdown_executor(executor, cancelled or _CANCEL_EVENT.is_set())
 
             if cancelled or _CANCEL_EVENT.is_set():
-                print("\n\nBenchmark cancelled for", model)
-                print("\n\n")
-                summarize_results(dirname)
+                benchmark_print(f"Benchmark cancelled for {model}", style="yellow")
+                summarize_results(dirname, quiet=not verbose)
                 return 2
     except KeyboardInterrupt:
-        print("\n\nBenchmark cancelled for", model)
+        benchmark_print(f"Benchmark cancelled for {model}", style="yellow")
         _CANCEL_EVENT.set()
-        print("\n\n")
-        summarize_results(dirname)
+        summarize_results(dirname, quiet=not verbose)
         return 2
 
-    print()
-    print()
-    print()
-    summarize_results(dirname)
+    update_benchmark_task(progress_task, status="complete")
+    if verbose:
+        print()
+        print()
+        print()
+    summarize_results(dirname, quiet=not verbose)
 
     return 0
 
@@ -1046,6 +1359,11 @@ def main(
         "--purge",
         help="Delete selected benchmark run dirs and generated aggregate report files, then exit",
     ),
+    hard_purge: bool = typer.Option(
+        False,
+        "--hard-purge",
+        help="Kill tracked benchmark child processes, remove staged cleanup dirs, and retry deletion until benchmark artifacts are gone",
+    ),
     tries: int = typer.Option(2, "--tries", "-r", help="Number of tries for running tests"),
     threads: int = typer.Option(1, "--threads", "-t", help="Number of threads to run in parallel"),
     num_tests: int = typer.Option(-1, "--num-tests", "-n", help="Number of tests to run"),
@@ -1107,14 +1425,22 @@ def main(
     if dirnames is None:
         dirnames = []
 
-    if len(dirnames) > 1 and not (stats_only or diffs_only or report_only or purge):
+    if len(dirnames) > 1 and not (stats_only or diffs_only or report_only or purge or hard_purge):
         print("Only provide 1 dirname unless running with --stats, --diffs, --report or --purge")
         raise typer.Exit(code=1)
+
+    reuse_named_run_dir = not (stats_only or diffs_only or report_only or purge or make_new)
+    reset_named_run_dir = reuse_named_run_dir and bool(dirnames) and not cont
 
     updated_dirnames = []
     for dirname in dirnames:
         dirname = Path(dirname)
-        dirname = resolve_dirname(dirname, stats_only or cont or purge, make_new)
+        dirname = resolve_dirname(
+            dirname,
+            stats_only or cont or purge or hard_purge or reuse_named_run_dir,
+            make_new,
+            choose_latest_prior=reuse_named_run_dir,
+        )
         if not dirname:
             raise typer.Exit(code=1)
         updated_dirnames.append(dirname)
@@ -1129,26 +1455,35 @@ def main(
         write_aggregate_reports(updated_dirnames or None, stats_languages=stats_languages or languages)
         return 0
 
-    if purge:
-        cleanup_summary = cleanup_benchmark_artifacts(updated_dirnames or None)
+    if purge or hard_purge:
+        cleanup_summary = hard_cleanup_benchmark_artifacts(updated_dirnames or None) if hard_purge else cleanup_benchmark_artifacts(updated_dirnames or None)
         for removed_dir in cleanup_summary.removed_dirs:
             print(f"Removed benchmark dir: {removed_dir}")
         for removed_file in cleanup_summary.removed_files:
             print(f"Removed aggregate report: {removed_file}")
         for skipped_dir in cleanup_summary.skipped_dirs:
             print(f"Skipped benchmark path: {skipped_dir}")
+        for pid in getattr(cleanup_summary, "killed_processes", []):
+            print(f"Killed tracked process: {pid}")
+        for pid in getattr(cleanup_summary, "failed_processes", []):
+            print(f"Failed to kill tracked process: {pid}")
         if not cleanup_summary.removed_dirs and not cleanup_summary.removed_files:
             print("No benchmark artifacts found to purge.")
         return 0
+
+    if reset_named_run_dir:
+        for dirname in updated_dirnames:
+            duplicate_summary = cleanup_duplicate_named_runs(dirname)
+            for removed_dir in duplicate_summary.removed_dirs:
+                print(f"Removed duplicate benchmark dir: {removed_dir}")
+            for skipped_dir in duplicate_summary.skipped_dirs:
+                print(f"Skipped duplicate benchmark dir: {skipped_dir}")
 
     if not languages:
         print("--languages is required when running benchmarks")
         raise typer.Exit(code=1)
 
     model_names = normalize_models(model)
-
-    assert len(updated_dirnames) == 1, updated_dirnames
-    dirname = updated_dirnames[0]
 
     if "AIDER_DOCKER" not in os.environ and not unsafe:
         print("Warning: benchmarking runs unvetted code from an LLM.")
@@ -1159,7 +1494,19 @@ def main(
     assert BENCHMARK_DNAME.is_dir(), BENCHMARK_DNAME
 
     try:
-        run_dirnames = build_model_dirnames(dirname, model_names)
+        if not updated_dirnames and len(model_names) > 1:
+            run_dirnames = build_generated_model_dirnames(model_names)
+        else:
+            if not updated_dirnames:
+                dirname = Path(build_default_run_name(model_names))
+                dirname = resolve_dirname(dirname, False, make_new)
+                if not dirname:
+                    raise typer.Exit(code=1)
+                updated_dirnames.append(dirname)
+
+            assert len(updated_dirnames) == 1, updated_dirnames
+            dirname = updated_dirnames[0]
+            run_dirnames = build_model_dirnames(dirname, model_names, use_base_dirname_for_first=not dirnames)
     except ValueError as exc:
         print(exc)
         raise typer.Exit(code=1)
@@ -1171,50 +1518,13 @@ def main(
     cancelled_models = set()
     _CANCEL_EVENT.clear()
     try:
-        if max_model_parallelism == 1 or len(model_runs) == 1:
-            for model_name, run_dirname in model_runs:
-                if _CANCEL_EVENT.is_set():
-                    cancelled_models.add(model_name)
-                    continue
-                status = run_single_model_benchmark(
-                model_name,
-                run_dirname,
-                sleep,
-                languages,
-                edit_format,
-                editor_model,
-                editor_edit_format,
-                replay,
-                keywords,
-                clean,
-                no_unit_tests,
-                no_aider,
-                verbose,
-                tries,
-                threads,
-                num_tests,
-                num_ctx,
-                read_model_settings,
-                reasoning_effort,
-                thinking_tokens,
-                llm_concurrency,
-                rate_limit_retries,
-                rate_limit_backoff_initial,
-                rate_limit_backoff_max,
-                exercises_dir,
-                commit_hash,
-            )
-                if status == 2:
-                    cancelled_models.add(model_name)
-                elif status:
-                    raise typer.Exit(code=status)
-        else:
-            cancelled = False
-            executor = ThreadPoolExecutor(max_workers=min(max_model_parallelism, len(model_runs)))
-            try:
-                futures = {
-                    executor.submit(
-                        run_single_model_benchmark,
+        with benchmark_progress(enabled=not verbose):
+            if max_model_parallelism == 1 or len(model_runs) == 1:
+                for model_name, run_dirname in model_runs:
+                    if _CANCEL_EVENT.is_set():
+                        cancelled_models.add(model_name)
+                        continue
+                    status = run_single_model_benchmark(
                         model_name,
                         run_dirname,
                         sleep,
@@ -1224,7 +1534,7 @@ def main(
                         editor_edit_format,
                         replay,
                         keywords,
-                        clean,
+                        clean or reset_named_run_dir,
                         no_unit_tests,
                         no_aider,
                         verbose,
@@ -1238,49 +1548,90 @@ def main(
                         llm_concurrency,
                         rate_limit_retries,
                         rate_limit_backoff_initial,
-                    rate_limit_backoff_max,
+                        rate_limit_backoff_max,
                         exercises_dir,
                         commit_hash,
-                    ): model_name
-                    for model_name, run_dirname in model_runs
-                }
-
-                for future in futures:
-                    if _CANCEL_EVENT.is_set():
-                        cancelled_models.add(futures[future])
-                        cancelled = True
-                        continue
-                    try:
-                        status = future.result()
-                    except BenchmarkCancelled:
-                        _CANCEL_EVENT.set()
-                        cancelled_models.add(futures[future])
-                        cancelled = True
-                        continue
+                    )
                     if status == 2:
-                        cancelled_models.add(futures[future])
-                        cancelled = True
+                        cancelled_models.add(model_name)
                     elif status:
                         raise typer.Exit(code=status)
-            except KeyboardInterrupt:
-                _CANCEL_EVENT.set()
-                cancelled = True
-                raise
-            finally:
-                shutdown_executor(executor, cancelled or _CANCEL_EVENT.is_set())
+            else:
+                cancelled = False
+                executor = ThreadPoolExecutor(max_workers=min(max_model_parallelism, len(model_runs)))
+                try:
+                    futures = {
+                        executor.submit(
+                            run_single_model_benchmark,
+                            model_name,
+                            run_dirname,
+                            sleep,
+                            languages,
+                            edit_format,
+                            editor_model,
+                            editor_edit_format,
+                            replay,
+                            keywords,
+                            clean or reset_named_run_dir,
+                            no_unit_tests,
+                            no_aider,
+                            verbose,
+                            tries,
+                            threads,
+                            num_tests,
+                            num_ctx,
+                            read_model_settings,
+                            reasoning_effort,
+                            thinking_tokens,
+                            llm_concurrency,
+                            rate_limit_retries,
+                            rate_limit_backoff_initial,
+                            rate_limit_backoff_max,
+                            exercises_dir,
+                            commit_hash,
+                        ): model_name
+                        for model_name, run_dirname in model_runs
+                    }
+
+                    for future in futures:
+                        if _CANCEL_EVENT.is_set():
+                            cancelled_models.add(futures[future])
+                            cancelled = True
+                            continue
+                        try:
+                            status = future.result()
+                        except BenchmarkCancelled:
+                            _CANCEL_EVENT.set()
+                            cancelled_models.add(futures[future])
+                            cancelled = True
+                            continue
+                        if status == 2:
+                            cancelled_models.add(futures[future])
+                            cancelled = True
+                        elif status:
+                            raise typer.Exit(code=status)
+                except KeyboardInterrupt:
+                    _CANCEL_EVENT.set()
+                    cancelled = True
+                    raise
+                finally:
+                    shutdown_executor(executor, cancelled or _CANCEL_EVENT.is_set())
     except KeyboardInterrupt:
-        print("\n\nBenchmark cancelled.")
+        benchmark_print("Benchmark cancelled.", style="yellow")
         _CANCEL_EVENT.set()
         cancelled_models.update(model_name for model_name, _ in model_runs)
 
     if cancelled_models:
-        print(f"Cancelled models: {', '.join(sorted(cancelled_models))}")
-    print("Writing aggregate reports for completed models...")
+        benchmark_print(f"Cancelled models: {', '.join(sorted(cancelled_models))}", style="yellow")
+    benchmark_print("Writing aggregate reports for completed models...", style="cyan")
     write_aggregate_reports(
         run_dirnames,
         stats_languages=languages,
         write_empty_yaml=bool(cancelled_models),
+        quiet=not verbose,
     )
+    if not verbose:
+        benchmark_print("Aggregate reports updated.", style="green")
     if cancelled_models:
         raise typer.Exit(code=2)
     return 0
@@ -1344,7 +1695,7 @@ def load_results(dirname, stats_languages=None):
     return all_results
 
 
-def summarize_results(dirname, stats_languages=None):
+def summarize_results(dirname, stats_languages=None, quiet=False):
     all_results = load_results(dirname, stats_languages)
 
     res = SimpleNamespace()
@@ -1421,7 +1772,8 @@ def summarize_results(dirname, stats_languages=None):
     #    return
 
     console = Console(highlight=False)
-    safe_console_rule(console, title=str(dirname))
+    if not quiet:
+        safe_console_rule(console, title=str(dirname))
 
     commit_hashes = variants["commit_hash"]
     versions = get_versions(commit_hashes)
@@ -1440,9 +1792,11 @@ def summarize_results(dirname, stats_languages=None):
         setattr(res, f"pass_rate_{i + 1}", f"{pass_rate:.1f}")
         setattr(res, f"pass_num_{i + 1}", passed_tests[i])
 
-    print(f"- dirname: {dirname.name}")
+    if not quiet:
+        print(f"- dirname: {dirname.name}")
     style = None if res.completed_tests == res.total_tests else "red"
-    console.print(f"  test_cases: {res.completed_tests}", style=style)
+    if not quiet:
+        console.print(f"  test_cases: {res.completed_tests}", style=style)
     for key, val in variants.items():
         if len(val) > 1:
             style = "red"
@@ -1450,57 +1804,66 @@ def summarize_results(dirname, stats_languages=None):
             style = None
         val = ", ".join(map(str, val))
         setattr(res, key, val)
-        console.print(f"  {key}: {val}", style=style)
+        if not quiet:
+            console.print(f"  {key}: {val}", style=style)
 
-    if res.reasoning_effort is not None:
+    if res.reasoning_effort is not None and not quiet:
         print(f"  reasoning_effort: {res.reasoning_effort}")
-    if res.thinking_tokens is not None:
+    if res.thinking_tokens is not None and not quiet:
         print(f"  thinking_tokens: {res.thinking_tokens}")
 
-    for i in range(tries):
-        print(f"  pass_rate_{i + 1}: {percents[i]:.1f}")
-    for i in range(tries):
-        print(f"  pass_num_{i + 1}: {passed_tests[i]}")
+    if not quiet:
+        for i in range(tries):
+            print(f"  pass_rate_{i + 1}: {percents[i]:.1f}")
+        for i in range(tries):
+            print(f"  pass_num_{i + 1}: {passed_tests[i]}")
 
     pct_well_formed = 1.0 - res.num_with_malformed_responses / res.completed_tests
-    print(f"  percent_cases_well_formed: {pct_well_formed * 100:.1f}")
+    if not quiet:
+        print(f"  percent_cases_well_formed: {pct_well_formed * 100:.1f}")
 
-    show("error_outputs")
-    show("num_malformed_responses")
-    show("num_with_malformed_responses")
-    show("user_asks")
-    show("lazy_comments")
-    show("syntax_errors")
-    show("indentation_errors")
-    show("exhausted_context_windows")
-    show("prompt_tokens", red=None)
-    show("completion_tokens", red=None)
-    show("test_timeouts")
-    print(f"  total_tests: {res.total_tests}")
+    if not quiet:
+        show("error_outputs")
+        show("num_malformed_responses")
+        show("num_with_malformed_responses")
+        show("user_asks")
+        show("lazy_comments")
+        show("syntax_errors")
+        show("indentation_errors")
+        show("exhausted_context_windows")
+        show("prompt_tokens", red=None)
+        show("completion_tokens", red=None)
+        show("test_timeouts")
+        print(f"  total_tests: {res.total_tests}")
 
     command = ""
     if variants["model"]:
         a_model = set(variants["model"]).pop()
         command = f"aider --model {a_model}"
-        print(f"  command: {command}")
+        if not quiet:
+            print(f"  command: {command}")
 
-    print(f"  date: {date}")
-    print("  versions:", ",".join(versions))
+    if not quiet:
+        print(f"  date: {date}")
+        print("  versions:", ",".join(versions))
 
     res.avg_duration = res.duration / res.completed_tests
-    print(f"  seconds_per_case: {res.avg_duration:.1f}")
+    if not quiet:
+        print(f"  seconds_per_case: {res.avg_duration:.1f}")
 
-    print(f"  total_cost: {res.cost:.4f}")
+    if not quiet:
+        print(f"  total_cost: {res.cost:.4f}")
 
     res.avg_cost = res.cost / res.completed_tests
 
     projected_cost = res.avg_cost * res.total_tests
 
-    print()
-    print(
-        f"costs: ${res.avg_cost:.4f}/test-case, ${res.cost:.2f} total,"
-        f" ${projected_cost:.2f} projected"
-    )
+    if not quiet:
+        print()
+        print(
+            f"costs: ${res.avg_cost:.4f}/test-case, ${res.cost:.2f} total,"
+            f" ${projected_cost:.2f} projected"
+        )
 
     failed_num = max(0, res.completed_tests - sum(passed_tests[:2]))
     failed_rate = 100 * failed_num / res.completed_tests if res.completed_tests else 0
@@ -1546,7 +1909,8 @@ def summarize_results(dirname, stats_languages=None):
     report["total_cost"] = res.cost
     write_benchmark_report(dirname, report)
 
-    safe_console_rule(console)
+    if not quiet:
+        safe_console_rule(console)
 
     # print(json.dumps(vars(res), indent=4, sort_keys=True))
     return res
@@ -1749,7 +2113,8 @@ def run_test_real(
     if thinking_tokens is not None:
         main_model.set_thinking_tokens(thinking_tokens)
 
-    dump(main_model.max_chat_history_tokens)
+    if verbose:
+        dump(main_model.max_chat_history_tokens)
 
     if num_ctx:
         if not main_model.extra_params:
@@ -1757,27 +2122,32 @@ def run_test_real(
         main_model.extra_params["num_ctx"] = num_ctx
     edit_format = edit_format or main_model.edit_format
 
-    dump(main_model)
-    dump(edit_format)
+    if verbose:
+        dump(main_model)
+        dump(edit_format)
     show_fnames = ",".join(map(str, fnames))
-    print("fnames:", show_fnames)
+    if verbose:
+        print("fnames:", show_fnames)
 
-    coder = Coder.create(
-        main_model,
-        edit_format,
-        io,
-        fnames=fnames,
-        use_git=False,
-        stream=False,
-        verbose=verbose,
-        # auto_lint=False,  # disabled for code-in-json experiments
-        cache_prompts=True,
-        suggest_shell_commands=False,
-        ignore_mentions=ignore_files,
-    )
-    dump(coder.ignore_mentions)
+    with quiet_output(verbose):
+        coder = Coder.create(
+            main_model,
+            edit_format,
+            io,
+            fnames=fnames,
+            use_git=False,
+            stream=False,
+            verbose=verbose,
+            # auto_lint=False,  # disabled for code-in-json experiments
+            cache_prompts=True,
+            suggest_shell_commands=False,
+            ignore_mentions=ignore_files,
+        )
+    if verbose:
+        dump(coder.ignore_mentions)
 
-    coder.show_announcements()
+    with quiet_output(verbose):
+        coder.show_announcements()
     coder.get_file_mentions = lambda x: set()  # No loading of any other files
 
     rate_limit_scope = get_rate_limit_scope(model_name)
@@ -1810,23 +2180,27 @@ def run_test_real(
             show = [">> " + line for line in show]
             io.append_chat_history("".join(show))
 
-            coder.apply_updates()
+            with quiet_output(verbose):
+                coder.apply_updates()
         else:
-            response = run_with_rate_limit_retry(
-                lambda: coder.run(with_message=instructions, preproc=False),
-                llm_limiter,
-                rate_limit_scope,
-                rate_limit_retries,
-            )
+            with quiet_output(verbose):
+                response = run_with_rate_limit_retry(
+                    lambda: coder.run(with_message=instructions, preproc=False),
+                    llm_limiter,
+                    rate_limit_scope,
+                    rate_limit_retries,
+                )
 
         dur += time.time() - start
 
         if not no_aider:
             pat = r"^[+]? *[#].* [.][.][.] "
             # Count the number of lines that match pat in response
-            dump(response)
+            if verbose:
+                dump(response)
             lazy_comments += len(re.findall(pat, response, re.MULTILINE))
-            dump(lazy_comments)
+            if verbose:
+                dump(lazy_comments)
 
         if coder.last_keyboard_interrupt:
             raise KeyboardInterrupt
@@ -1835,7 +2209,7 @@ def run_test_real(
             break
 
         try:
-            errors = run_unit_tests(original_dname, testdir, history_fname, test_files)
+            errors = run_unit_tests(original_dname, testdir, history_fname, test_files, verbose=verbose)
         except subprocess.TimeoutExpired:
             # try:
             #    errors = run_unit_tests(original_dname, testdir, history_fname, test_files)
@@ -1857,7 +2231,8 @@ def run_test_real(
         syntax_errors += sum(1 for line in errors if line.startswith("SyntaxError"))
         indentation_errors += sum(1 for line in errors if line.startswith("IndentationError"))
 
-        print(errors[-1])
+        if verbose:
+            print(errors[-1])
         errors = "\n".join(errors)
         instructions = errors
         instructions += prompts.test_failures.format(file_list=file_list)
@@ -1917,14 +2292,15 @@ def run_test_real(
     if edit_format == "architect":
         results["editor_model"] = main_model.editor_model.name if main_model.editor_model else None
         results["editor_edit_format"] = main_model.editor_edit_format
-    dump(results)
+    if verbose:
+        dump(results)
 
     results_fname.write_text(json.dumps(results, indent=4))
 
     return results
 
 
-def run_unit_tests(original_dname, testdir, history_fname, test_files):
+def run_unit_tests(original_dname, testdir, history_fname, test_files, verbose=False):
     timeout = 60 * 3
 
     # Map of file extensions to test commands
@@ -1954,33 +2330,45 @@ def run_unit_tests(original_dname, testdir, history_fname, test_files):
         src = original_dname / Path(*testdir.parts[-4:]) / file_path
         dst = testdir / file_path
         if src.exists():
-            print("copying", src, dst)
+            if verbose:
+                print("copying", src, dst)
             os.makedirs(dst.parent, exist_ok=True)
             shutil.copy(src, dst)
 
-    print(" ".join(command))
+    if verbose:
+        print(" ".join(command))
 
-    result = subprocess.run(
+    process = subprocess.Popen(
         command,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         text=True,
-        timeout=timeout,
         cwd=testdir,
         encoding="utf-8",
         errors="replace",
     )
+    register_tracked_process(process.pid)
+    try:
+        stdout, _ = process.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        terminate_process_tree(process.pid, force=True)
+        stdout, _ = process.communicate()
+        raise
+    finally:
+        unregister_tracked_process(process.pid)
 
-    success = result.returncode == 0
-    res = result.stdout
+    success = process.returncode == 0
+    res = stdout
     res = cleanup_test_output(res, testdir)
-    dump(res)
+    if verbose:
+        dump(res)
 
     with history_fname.open("a", encoding="utf-8", errors="replace") as fh:
         fh.write(f"```\n{res}\n```")
 
     if not success:
-        print(f"Tests failed: {testdir}")
+        if verbose:
+            print(f"Tests failed: {testdir}")
         return res
 
 

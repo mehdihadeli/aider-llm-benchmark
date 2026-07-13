@@ -57,6 +57,237 @@
 			"type": "shell",
 			"command": "uv run python -m pytest tests/integration/test_benchmark_cli.py::test_benchmark_ctrl_c_cancels_gracefully -v",
 			"group": "test"
+		},
+		{
+			"label": "Reproduce multi-model benchmark folders",
+			"type": "shell",
+			"command": "uv run benchmark --model github_copilot/gpt-4 --model github_copilot/gpt-4.1 --languages csharp --num-tests 1 --unsafe",
+			"isBackground": false,
+			"group": "test"
+		},
+		{
+			"label": "Reproduce benchmark purge",
+			"type": "shell",
+			"command": "uv run benchmark --purge",
+			"isBackground": false,
+			"group": "test"
+		},
+		{
+			"label": "Validate purge then benchmark",
+			"type": "shell",
+			"command": "uv run benchmark --purge && uv run benchmark --model github_copilot/gpt-4 --model github_copilot/gpt-4.1 --languages csharp --num-tests 1 --unsafe",
+			"isBackground": false,
+			"group": "test"
+		},
+		{
+			"label": "Show benchmark root listing",
+			"type": "shell",
+			"command": "ls -1 tmp.benchmarks",
+			"isBackground": false,
+			"group": "test"
+		},
+		{
+			"label": "Inspect purge candidates",
+			"type": "shell",
+			"command": "uv run python -c \"from pathlib import Path; import re; root=Path('tmp.benchmarks'); rx=re.compile(r'^\\\\d{4}-\\\\d{2}-\\\\d{2}-\\\\d{2}-\\\\d{2}-\\\\d{2}--'); print(sorted((p.name, p.is_dir(), bool(rx.match(p.name))) for p in root.iterdir()))\"",
+			"isBackground": false,
+			"group": "test"
+		},
+		{
+			"label": "Retry benchmark purge",
+			"type": "shell",
+			"command": "uv run benchmark --purge",
+			"isBackground": false,
+			"group": "test"
+		},
+		{
+			"label": "List benchmark root after purge",
+			"type": "shell",
+			"command": "ls -1 tmp.benchmarks",
+			"isBackground": false,
+			"group": "test"
+		},
+		{
+			"label": "Python list benchmark root",
+			"type": "shell",
+			"command": "uv run python -c \"from pathlib import Path; print([p.name for p in Path('tmp.benchmarks').iterdir()])\"",
+			"isBackground": false,
+			"group": "test"
+		},
+		{
+			"label": "List benchmark root before repro",
+			"type": "shell",
+			"command": "uv run python -c \"from pathlib import Path; root=Path('tmp.benchmarks'); print(sorted(p.name for p in root.iterdir()) if root.exists() else [])\"",
+			"isBackground": false,
+			"group": "test"
+		},
+		{
+			"label": "Repro extra benchmark folder from empty root",
+			"type": "shell",
+			"command": "uv run benchmark --model github_copilot/gpt-4 --model github_copilot/gpt-4.1 --languages csharp --num-tests 1 --unsafe",
+			"isBackground": false,
+			"group": "test"
+		},
+		{
+			"label": "Python list benchmark root after repro",
+			"type": "shell",
+			"command": "uv run python -c \"from pathlib import Path; root=Path('tmp.benchmarks'); print('all=', sorted(p.name for p in root.iterdir())); print('dirs=', sorted(p.name for p in root.iterdir() if p.is_dir())); print('files=', sorted(p.name for p in root.iterdir() if p.is_file()))\"",
+			"isBackground": false,
+			"group": "test"
+		},
+		{
+			"label": "Show benchmark dir mtimes",
+			"type": "shell",
+			"command": "uv run python -c \"from pathlib import Path; import datetime as d; root=Path('tmp.benchmarks'); items=[]; \nfor p in sorted(root.iterdir()):\n    if p.is_dir():\n        items.append((p.name, d.datetime.fromtimestamp(p.stat().st_mtime).isoformat(timespec='seconds')))\nprint(items)\"",
+			"isBackground": false,
+			"group": "test"
+		},
+		{
+			"label": "Show benchmark root resolution",
+			"type": "shell",
+			"command": "uv run python -c \"from pathlib import Path; import os; from aider_polyglot_benchmark.benchmark import BENCHMARK_DNAME; p=Path('tmp.benchmarks'); print('cwd=', Path.cwd()); print('rel=', p.resolve()); print('benchmark_dname=', BENCHMARK_DNAME.resolve()); print('env=', os.environ.get('AIDER_BENCHMARK_DIR'))\"",
+			"isBackground": false,
+			"group": "test"
+		},
+		{
+			"label": "Purge benchmark outputs again",
+			"type": "shell",
+			"command": "uv run benchmark --purge",
+			"isBackground": false,
+			"group": "test"
+		},
+		{
+			"label": "Run two-model benchmark once",
+			"type": "shell",
+			"command": "uv run benchmark --model github_copilot/gpt-4 --model github_copilot/gpt-4.1 --languages csharp --num-tests 1 --unsafe",
+			"isBackground": false,
+			"group": "test"
+		},
+		{
+			"label": "Inspect benchmark root after one run",
+			"type": "shell",
+			"command": "uv run python -c \"from pathlib import Path; root=Path('tmp.benchmarks'); print('all=', sorted(p.name for p in root.iterdir())); print('dirs=', sorted(p.name for p in root.iterdir() if p.is_dir())); print('files=', sorted(p.name for p in root.iterdir() if p.is_file()))\"",
+			"isBackground": false,
+			"group": "test"
+		},
+		{
+			"label": "Fresh python list benchmark root",
+			"type": "shell",
+			"command": "uv run python -c \"from pathlib import Path; print(sorted(p.name for p in Path('tmp.benchmarks').iterdir()))\"",
+			"isBackground": false,
+			"group": "test"
+		},
+		{
+			"label": "Validate staged purge end-to-end",
+			"type": "shell",
+			"command": "uv run benchmark --purge && uv run benchmark --model github_copilot/gpt-4 --model github_copilot/gpt-4.1 --languages csharp --num-tests 1 --unsafe && uv run python -c \"from pathlib import Path; root=Path('tmp.benchmarks'); print(sorted(p.name for p in root.iterdir()))\"",
+			"isBackground": false,
+			"group": "test"
+		},
+		{
+			"label": "Repro single-model named benchmark",
+			"type": "shell",
+			"command": "uv run benchmark --purge && uv run benchmark ssssssssssss --model github_copilot/gpt-4 --languages csharp --num-tests 1 --unsafe && uv run python -c \"from pathlib import Path; root=Path('tmp.benchmarks'); print('all=', sorted(p.name for p in root.iterdir())); print('dirs=', sorted(p.name for p in root.iterdir() if p.is_dir())); print('files=', sorted(p.name for p in root.iterdir() if p.is_file()))\"",
+			"isBackground": false,
+			"group": "test"
+		},
+		{
+			"label": "Inspect purge internals",
+			"type": "shell",
+			"command": "uv run python -c \"from pathlib import Path; from aider_polyglot_benchmark.benchmark import BENCHMARK_DNAME, cleanup_benchmark_artifacts, is_benchmark_result_dir; print('root=', BENCHMARK_DNAME); print('exists=', BENCHMARK_DNAME.exists()); print('before=', [(p.name, p.is_dir(), is_benchmark_result_dir(p)) for p in BENCHMARK_DNAME.iterdir()]); summary=cleanup_benchmark_artifacts(); print('removed=', [p.name for p in summary.removed_dirs]); print('skipped=', [p.name for p in summary.skipped_dirs]); print('after=', [p.name for p in BENCHMARK_DNAME.iterdir()])\"",
+			"isBackground": false,
+			"group": "test"
+		},
+		{
+			"label": "Validate single-model one-folder workflow",
+			"type": "shell",
+			"command": "uv run benchmark --purge && uv run benchmark ssssssssssss --model github_copilot/gpt-4 --languages csharp --num-tests 1 --unsafe && uv run python -c \"from pathlib import Path; root=Path('tmp.benchmarks'); dirs=sorted(p for p in root.iterdir() if p.is_dir()); print('dirs=', [p.name for p in dirs]); target=dirs[0]; practices=sorted((target / 'csharp' / 'exercises' / 'practice').iterdir()); print('practice_count=', len(practices)); print('practice_names=', [p.name for p in practices])\"",
+			"isBackground": false,
+			"group": "test"
+		},
+		{
+			"label": "Revalidate named single-model workflow",
+			"type": "shell",
+			"command": "uv run benchmark --purge && uv run benchmark ssssssssssss --model github_copilot/gpt-4 --languages csharp --num-tests 1 --unsafe && uv run python -c \"from pathlib import Path; root=Path('tmp.benchmarks'); dirs=sorted(p for p in root.iterdir() if p.is_dir()); files=sorted(p.name for p in root.iterdir() if p.is_file()); print('dirs=', [p.name for p in dirs]); print('files=', files); target=dirs[0]; practices=sorted((target / 'csharp' / 'exercises' / 'practice').iterdir()); print('practice_count=', len(practices)); print('practice_names=', [p.name for p in practices])\"",
+			"isBackground": false,
+			"group": "test"
+		},
+		{
+			"label": "Verify named run reuse behavior",
+			"type": "shell",
+			"command": "uv run benchmark ssssssssssss --model github_copilot/gpt-4 --languages csharp --num-tests 1 --unsafe --no-aider --no-unit-tests && uv run python -c \"from pathlib import Path; root=Path('tmp.benchmarks'); print('dirs=', sorted(p.name for p in root.iterdir() if p.is_dir()))\"",
+			"isBackground": false,
+			"group": "test"
+		},
+		{
+			"label": "Verify latest named run reuse",
+			"type": "shell",
+			"command": "uv run benchmark ssssssssssss --model github_copilot/gpt-4 --languages csharp --num-tests 1 --unsafe --no-aider --no-unit-tests && uv run python -c \"from pathlib import Path; root=Path('tmp.benchmarks'); print('dirs=', sorted(p.name for p in root.iterdir() if p.is_dir()))\"",
+			"isBackground": false,
+			"group": "test"
+		},
+		{
+			"label": "Validate named run reset behavior",
+			"type": "shell",
+			"command": "uv run benchmark ssssssssssss --model github_copilot/gpt-4 --languages csharp --num-tests 1 --unsafe --no-aider --no-unit-tests && uv run python -c \"from pathlib import Path; root=Path('tmp.benchmarks'); dirs=sorted(p.name for p in root.iterdir() if p.is_dir()); print('dirs=', dirs)\"",
+			"isBackground": false,
+			"group": "test"
+		},
+		{
+			"label": "Final verify one named benchmark dir",
+			"type": "shell",
+			"command": "uv run benchmark ssssssssssss --model github_copilot/gpt-4 --languages csharp --num-tests 1 --unsafe --no-aider --no-unit-tests && uv run python -c \"from pathlib import Path; root=Path('tmp.benchmarks'); print('dirs=', sorted(p.name for p in root.iterdir() if p.is_dir())); print('files=', sorted(p.name for p in root.iterdir() if p.is_file()))\"",
+			"isBackground": false,
+			"group": "test"
+		},
+		{
+			"label": "Validate named single-model three cases",
+			"type": "shell",
+			"command": "uv run benchmark --purge && uv run benchmark ssssssssssss --model github_copilot/gpt-4 --languages csharp --num-tests 3 --unsafe && uv run python -c \"from pathlib import Path; root=Path('tmp.benchmarks'); dirs=sorted(p for p in root.iterdir() if p.is_dir()); files=sorted(p.name for p in root.iterdir() if p.is_file()); print('dirs=', [p.name for p in dirs]); print('files=', files); target=dirs[0]; practices=sorted((target / 'csharp' / 'exercises' / 'practice').iterdir()); print('practice_count=', len(practices)); print('practice_names=', [p.name for p in practices])\"",
+			"isBackground": false,
+			"group": "test"
+		},
+		{
+			"label": "Validate unnamed single-model three cases",
+			"type": "shell",
+			"command": "uv run benchmark --model github_copilot/gpt-4 --languages csharp --num-tests 3 --unsafe && uv run python -c \"from pathlib import Path; root=Path('tmp.benchmarks'); dirs=sorted(p for p in root.iterdir() if p.is_dir()); files=sorted(p.name for p in root.iterdir() if p.is_file()); print('dirs=', [p.name for p in dirs]); print('files=', files); target=dirs[-1]; practices=sorted((target / 'csharp' / 'exercises' / 'practice').iterdir()); print('picked_dir=', target.name); print('practice_count=', len(practices)); print('practice_names=', [p.name for p in practices])\"",
+			"isBackground": false,
+			"group": "test"
+		},
+		{
+			"label": "Purge and inspect benchmark root",
+			"type": "shell",
+			"command": "uv run benchmark --purge && uv run python -c \"from pathlib import Path; root=Path('tmp.benchmarks'); print('exists=', root.exists()); print('all=', sorted(p.name for p in root.iterdir()) if root.exists() else [])\"",
+			"isBackground": false,
+			"group": "test"
+		},
+		{
+			"label": "Trace leftover purge dir",
+			"type": "shell",
+			"command": "uv run python -c \"from pathlib import Path; from aider_polyglot_benchmark.benchmark import cleanup_benchmark_artifacts, BENCHMARK_DNAME, is_benchmark_result_dir; root=BENCHMARK_DNAME; print('before=', [(p.name, p.is_dir(), is_benchmark_result_dir(p)) for p in root.iterdir()]); summary=cleanup_benchmark_artifacts(); print('removed=', [p.name for p in summary.removed_dirs]); print('skipped=', [p.name for p in summary.skipped_dirs]); print('after=', [p.name for p in root.iterdir()])\"",
+			"isBackground": false,
+			"group": "test"
+		},
+		{
+			"label": "Re-run from empty benchmark root",
+			"type": "shell",
+			"command": "uv run benchmark --model github_copilot/gpt-4 --languages csharp --num-tests 3 --unsafe && uv run python -c \"from pathlib import Path; root=Path('tmp.benchmarks'); print('all=', sorted(p.name for p in root.iterdir())); print('dirs=', sorted(p.name for p in root.iterdir() if p.is_dir())); print('files=', sorted(p.name for p in root.iterdir() if p.is_file())); target=sorted((p for p in root.iterdir() if p.is_dir()), key=lambda p: p.name)[-1]; practices=sorted((target / 'csharp' / 'exercises' / 'practice').iterdir()); print('target=', target.name); print('practice_count=', len(practices)); print('practice_names=', [p.name for p in practices])\"",
+			"isBackground": false,
+			"group": "test"
+		},
+		{
+			"label": "Validate hard purge CLI",
+			"type": "shell",
+			"command": "uv run benchmark --hard-purge && uv run python -c \"from pathlib import Path; root=Path('tmp.benchmarks'); print(sorted(p.name for p in root.iterdir()) if root.exists() else [])\"",
+			"isBackground": false,
+			"group": "test"
+		},
+		{
+			"label": "Trace hard purge leftover",
+			"type": "shell",
+			"command": "uv run python -c \"from pathlib import Path; from aider_polyglot_benchmark.benchmark import hard_cleanup_benchmark_artifacts, BENCHMARK_DNAME, is_benchmark_result_dir; root=BENCHMARK_DNAME; print('before=', [(p.name, p.is_dir(), is_benchmark_result_dir(p)) for p in root.iterdir()]); summary=hard_cleanup_benchmark_artifacts(); print('removed=', [p.name for p in summary.removed_dirs]); print('skipped=', [p.name for p in summary.skipped_dirs]); print('killed=', summary.killed_processes); print('failed=', summary.failed_processes); print('after=', [p.name for p in root.iterdir()])\"",
+			"isBackground": false,
+			"group": "test"
 		}
 	]
 }

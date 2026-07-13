@@ -1,10 +1,13 @@
 # flake8: noqa: E501
 
+import io
 import os
+import shutil
 import subprocess
 import sys
 import unittest
 import json
+from contextlib import redirect_stdout
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
@@ -13,10 +16,16 @@ from typer.testing import CliRunner
 
 from aider_polyglot_benchmark.benchmark import (
     _CANCEL_EVENT,
+    BENCHMARK_PROCESS_TRACKING_FILENAME,
     BENCHMARK_REPORT_FILENAMES,
     BenchmarkCancelled,
     app,
+    build_default_run_name,
+    build_generated_model_dirnames,
+    build_model_dirnames,
     cleanup_benchmark_artifacts,
+    cleanup_duplicate_named_runs,
+    hard_cleanup_benchmark_artifacts,
     cleanup_test_output,
     copy_selected_exercise_dirs,
     ensure_requested_tracks_available,
@@ -32,11 +41,15 @@ from aider_polyglot_benchmark.benchmark import (
     reset_shared_rate_limiters,
     resolve_model_parallelism,
     remove_tree,
+    remove_tree_with_retries,
     run_with_rate_limit_retry,
+    stage_dir_for_cleanup,
+    stage_dir_for_cleanup_with_retries,
     resolve_exercises_dir,
     resolve_llm_concurrency,
     summarize_results,
     should_reexec_with_local_venv,
+    write_aggregate_reports,
 )
 
 
@@ -144,9 +157,76 @@ class TestCleanupBenchmarkArtifacts(unittest.TestCase):
             with patch("aider_polyglot_benchmark.benchmark.remove_tree", side_effect=PermissionError):
                 summary = cleanup_benchmark_artifacts([run_dir], benchmark_root=benchmark_root)
 
-            self.assertTrue(run_dir.exists())
+            staged_dirs = [path for path in benchmark_root.iterdir() if path.name.startswith(".deleting-")]
+            self.assertFalse(run_dir.exists())
+            self.assertEqual(len(staged_dirs), 1)
             self.assertEqual(summary.removed_dirs, [])
             self.assertEqual(summary.skipped_dirs, [run_dir])
+
+    def test_cleanup_benchmark_artifacts_skips_dir_when_delete_leaves_path(self):
+        with TemporaryDirectory() as tmpdir:
+            benchmark_root = Path(tmpdir)
+            run_dir = benchmark_root / "2026-07-05-12-00-00--sample-run"
+            run_dir.mkdir()
+
+            with patch("aider_polyglot_benchmark.benchmark.remove_tree"):
+                summary = cleanup_benchmark_artifacts([run_dir], benchmark_root=benchmark_root)
+
+            staged_dirs = [path for path in benchmark_root.iterdir() if path.name.startswith(".deleting-")]
+            self.assertFalse(run_dir.exists())
+            self.assertEqual(len(staged_dirs), 1)
+            self.assertEqual(summary.removed_dirs, [])
+            self.assertEqual(summary.skipped_dirs, [run_dir])
+
+    def test_cleanup_benchmark_artifacts_falls_back_to_direct_delete_when_staging_fails(self):
+        with TemporaryDirectory() as tmpdir:
+            benchmark_root = Path(tmpdir)
+            run_dir = benchmark_root / "2026-07-05-12-00-00--sample-run"
+            run_dir.mkdir()
+
+            with patch(
+                "aider_polyglot_benchmark.benchmark.stage_dir_for_cleanup_with_retries",
+                return_value=None,
+            ):
+                summary = cleanup_benchmark_artifacts([run_dir], benchmark_root=benchmark_root)
+
+            self.assertFalse(run_dir.exists())
+            self.assertEqual(summary.removed_dirs, [run_dir])
+            self.assertEqual(summary.skipped_dirs, [])
+
+    def test_cleanup_duplicate_named_runs_keeps_latest_match(self):
+        with TemporaryDirectory() as tmpdir:
+            benchmark_root = Path(tmpdir)
+            older_run = benchmark_root / "2026-07-14-00-17-13--sample-run"
+            latest_run = benchmark_root / "2026-07-14-00-19-44--sample-run"
+            older_run.mkdir(parents=True)
+            latest_run.mkdir(parents=True)
+
+            summary = cleanup_duplicate_named_runs(latest_run, benchmark_root=benchmark_root)
+
+            self.assertFalse(older_run.exists())
+            self.assertTrue(latest_run.exists())
+            self.assertEqual(summary.removed_dirs, [older_run])
+            self.assertEqual(summary.skipped_dirs, [])
+
+    def test_hard_cleanup_benchmark_artifacts_kills_tracked_processes_and_staged_dirs(self):
+        with TemporaryDirectory() as tmpdir:
+            benchmark_root = Path(tmpdir)
+            staged_dir = benchmark_root / ".deleting-2026-07-05-12-00-00--sample-run"
+            staged_dir.mkdir(parents=True)
+            tracking_file = benchmark_root / BENCHMARK_PROCESS_TRACKING_FILENAME
+            tracking_file.write_text("[123, 456]", encoding="utf-8")
+
+            with patch(
+                "aider_polyglot_benchmark.benchmark.terminate_process_tree",
+                side_effect=[True, False],
+            ):
+                summary = hard_cleanup_benchmark_artifacts(benchmark_root=benchmark_root)
+
+            self.assertFalse(staged_dir.exists())
+            self.assertFalse(tracking_file.exists())
+            self.assertEqual(summary.killed_processes, [123])
+            self.assertEqual(summary.failed_processes, [456])
 
     def test_remove_tree_retries_after_permission_error(self):
         with TemporaryDirectory() as tmpdir:
@@ -172,6 +252,51 @@ class TestCleanupBenchmarkArtifacts(unittest.TestCase):
 
             chmod.assert_called_once()
             self.assertEqual(retried_paths, [blocked_file])
+
+    def test_remove_tree_with_retries_succeeds_after_transient_failure(self):
+        with TemporaryDirectory() as tmpdir:
+            target = Path(tmpdir) / "2026-07-05-12-00-00--sample-run"
+            target.mkdir()
+            calls = []
+
+            def flaky_remove(path):
+                calls.append(Path(path))
+                if len(calls) == 1:
+                    raise OSError("busy")
+                shutil.rmtree(path)
+
+            with patch("aider_polyglot_benchmark.benchmark.remove_tree", side_effect=flaky_remove):
+                self.assertTrue(remove_tree_with_retries(target, attempts=2, delay_seconds=0.0))
+
+            self.assertFalse(target.exists())
+            self.assertEqual(calls, [target, target])
+
+    def test_stage_dir_for_cleanup_renames_to_hidden_path(self):
+        with TemporaryDirectory() as tmpdir:
+            benchmark_root = Path(tmpdir)
+            target = benchmark_root / "2026-07-05-12-00-00--sample-run"
+            target.mkdir()
+
+            staged = stage_dir_for_cleanup(target, benchmark_root)
+
+            self.assertFalse(target.exists())
+            self.assertTrue(staged.exists())
+            self.assertEqual(staged.name, ".deleting-2026-07-05-12-00-00--sample-run")
+
+    def test_stage_dir_for_cleanup_with_retries_returns_none_after_repeated_failures(self):
+        with TemporaryDirectory() as tmpdir:
+            benchmark_root = Path(tmpdir)
+            target = benchmark_root / "2026-07-05-12-00-00--sample-run"
+            target.mkdir()
+
+            with patch(
+                "aider_polyglot_benchmark.benchmark.stage_dir_for_cleanup",
+                side_effect=OSError("busy"),
+            ):
+                staged = stage_dir_for_cleanup_with_retries(target, benchmark_root, attempts=2, delay_seconds=0.0)
+
+            self.assertIsNone(staged)
+            self.assertTrue(target.exists())
 
 
 class TestLocalVenvHelpers(unittest.TestCase):
@@ -392,8 +517,145 @@ class TestMainCli(unittest.TestCase):
             self.assertEqual(shutdown_calls, [(False, True)])
             write_reports.assert_called_once()
 
+    def test_main_uses_model_names_when_run_name_is_omitted(self):
+        with TemporaryDirectory() as tmpdir:
+            benchmark_root = Path(tmpdir) / "tmp.benchmarks"
+            benchmark_root.mkdir(parents=True)
+            exercises_root = Path(tmpdir) / "tracks"
+            (exercises_root / "csharp" / "exercises" / "practice" / "alpha").mkdir(parents=True)
+            env = {
+                "AIDER_BENCHMARK_DIR": str(benchmark_root),
+                "AIDER_DOCKER": "1",
+            }
+            called_dirnames = []
+
+            def fake_run_single_model_benchmark(model_name, run_dirname, *args):
+                called_dirnames.append(Path(run_dirname).name)
+                return 0
+
+            with patch(
+                "aider_polyglot_benchmark.benchmark.run_single_model_benchmark",
+                side_effect=fake_run_single_model_benchmark,
+            ) as run_model:
+                with patch("aider_polyglot_benchmark.benchmark.write_aggregate_reports"):
+                    result = RUNNER.invoke(
+                        app,
+                        [
+                            "--model",
+                            "github_copilot/gpt-4",
+                            "--model",
+                            "github_copilot/gpt-4.1",
+                            "--model",
+                            "github_copilot/kimi",
+                            "--languages",
+                            "csharp",
+                            "--num-tests",
+                            "1",
+                            "--no-aider",
+                            "--no-unit-tests",
+                            "--exercises-dir",
+                            str(exercises_root),
+                        ],
+                        env=env,
+                    )
+
+            self.assertEqual(result.exit_code, 0, result.stdout)
+            self.assertEqual(run_model.call_count, 3)
+            self.assertTrue(any(name.endswith("--gpt-4") for name in called_dirnames))
+            self.assertTrue(any(name.endswith("--gpt-4.1") for name in called_dirnames))
+            self.assertTrue(any(name.endswith("--kimi") for name in called_dirnames))
+
+    def test_main_reuses_latest_named_run_dir_when_prior_exists(self):
+        with TemporaryDirectory() as tmpdir:
+            benchmark_root = Path(tmpdir) / "tmp.benchmarks"
+            benchmark_root.mkdir(parents=True)
+            prior_run_dir = benchmark_root / "2026-07-14-00-17-13--ssssssssssss"
+            newer_run_dir = benchmark_root / "2026-07-14-00-19-44--ssssssssssss"
+            (prior_run_dir / "csharp" / "exercises" / "practice" / "alpha").mkdir(parents=True)
+            (newer_run_dir / "csharp" / "exercises" / "practice" / "alpha").mkdir(parents=True)
+            exercises_root = Path(tmpdir) / "tracks"
+            (exercises_root / "csharp" / "exercises" / "practice" / "alpha").mkdir(parents=True)
+            env = {
+                "AIDER_BENCHMARK_DIR": str(benchmark_root),
+                "AIDER_DOCKER": "1",
+            }
+            called_dirnames = []
+
+            def fake_run_single_model_benchmark(model_name, run_dirname, *args):
+                called_dirnames.append(Path(run_dirname).name)
+                return 0
+
+            with patch(
+                "aider_polyglot_benchmark.benchmark.run_single_model_benchmark",
+                side_effect=fake_run_single_model_benchmark,
+            ) as run_model:
+                with patch("aider_polyglot_benchmark.benchmark.BENCHMARK_DNAME", benchmark_root):
+                    with patch("aider_polyglot_benchmark.benchmark.write_aggregate_reports"):
+                        result = RUNNER.invoke(
+                            app,
+                            [
+                                "ssssssssssss",
+                                "--model",
+                                "github_copilot/gpt-4",
+                                "--languages",
+                                "csharp",
+                                "--num-tests",
+                                "1",
+                                "--no-aider",
+                                "--no-unit-tests",
+                                "--exercises-dir",
+                                str(exercises_root),
+                            ],
+                            env=env,
+                        )
+
+            self.assertEqual(result.exit_code, 0, result.stdout)
+            self.assertEqual(run_model.call_count, 1)
+            self.assertEqual(called_dirnames, [newer_run_dir.name])
+
 
 class TestModelNormalization(unittest.TestCase):
+    def test_build_generated_model_dirnames_use_timestamp_and_single_model_slug(self):
+        with patch("aider_polyglot_benchmark.benchmark.datetime.datetime") as fake_datetime:
+            fake_datetime.now.return_value.strftime.return_value = "2026-07-13-22-37-23--"
+
+            dirnames = build_generated_model_dirnames(
+                ["github_copilot/gpt-4", "github_copilot/gpt-4.1"]
+            )
+
+        self.assertEqual(
+            [dirname.name for dirname in dirnames],
+            [
+                "2026-07-13-22-37-23--gpt-4",
+                "2026-07-13-22-37-23--gpt-4.1",
+            ],
+        )
+
+    def test_build_model_dirnames_always_adds_per_model_suffixes_for_generated_names(self):
+        base_dirname = Path("tmp.benchmarks/2026-07-13-22-37-23--gpt-4_gpt-4.1")
+
+        dirnames = build_model_dirnames(
+            base_dirname,
+            ["github_copilot/gpt-4", "github_copilot/gpt-4.1"],
+            use_base_dirname_for_first=True,
+        )
+
+        self.assertEqual(
+            [dirname.name for dirname in dirnames],
+            [
+                "2026-07-13-22-37-23--gpt-4_gpt-4.1--gpt-4",
+                "2026-07-13-22-37-23--gpt-4_gpt-4.1--gpt-4.1",
+            ],
+        )
+
+    def test_build_default_run_name_uses_model_leaf_names(self):
+        self.assertEqual(
+            build_default_run_name(
+                ["github_copilot/gpt-4", "github_copilot/gpt-4.1", "github_copilot/kimi"]
+            ),
+            "gpt-4_gpt-4.1_kimi",
+        )
+
     def test_normalize_models_uses_model_env_when_flag_missing(self):
         with patch.dict(os.environ, {"MODEL": "anthropic/claude-sonnet-4"}, clear=False):
             self.assertEqual(normalize_models(None), ["anthropic/claude-sonnet-4"])
@@ -473,3 +735,42 @@ class TestBenchmarkReport(unittest.TestCase):
 
         self.assertIn("failed_num: 1", report_text)
         self.assertIn("failed_rate: 33.3333", report_text)
+
+    def test_summarize_results_quiet_writes_report_without_console_dump(self):
+        with TemporaryDirectory() as tmpdir:
+            run_dir = Path(tmpdir) / "2026-07-06-17-42-16--sample-run"
+            alpha = run_dir / "csharp" / "exercises" / "practice" / "alpha"
+            alpha.mkdir(parents=True)
+            (alpha / ".aider.results.json").write_text(
+                json.dumps({"tests_outcomes": [True], "model": "github/gpt-4.1"}),
+                encoding="utf-8",
+            )
+
+            stdout = io.StringIO()
+            with patch("aider_polyglot_benchmark.benchmark.get_versions", return_value={"0.86.2"}):
+                with redirect_stdout(stdout):
+                    summarize_results(run_dir, quiet=True)
+
+            self.assertEqual(stdout.getvalue(), "")
+            self.assertTrue((run_dir / "benchmark-report.yml").exists())
+
+    def test_write_aggregate_reports_quiet_writes_files_without_console_dump(self):
+        with TemporaryDirectory() as tmpdir:
+            benchmark_root = Path(tmpdir) / "tmp.benchmarks"
+            run_dir = benchmark_root / "2026-07-06-17-42-16--sample-run"
+            alpha = run_dir / "csharp" / "exercises" / "practice" / "alpha"
+            alpha.mkdir(parents=True)
+            (alpha / ".aider.results.json").write_text(
+                json.dumps({"tests_outcomes": [True], "model": "github/gpt-4.1"}),
+                encoding="utf-8",
+            )
+
+            stdout = io.StringIO()
+            with patch("aider_polyglot_benchmark.leaderboard_report.BENCHMARK_ROOT", benchmark_root):
+                with redirect_stdout(stdout):
+                    write_aggregate_reports([run_dir], quiet=True)
+
+            self.assertEqual(stdout.getvalue(), "")
+            self.assertTrue((benchmark_root / "leaderboard.md").exists())
+            self.assertTrue((benchmark_root / "leaderboard.html").exists())
+            self.assertTrue((benchmark_root / "polyglot_leaderboard.yml").exists())
