@@ -54,6 +54,7 @@ def test_benchmark_report_stats_diffs_and_purge_commands_run(tmp_path, run_cli, 
     run_b = benchmark_root / "2026-07-05-12-00-01--run-b"
     write_result_file(run_a, "csharp", "alpha", [True])
     write_result_file(run_b, "csharp", "alpha", [False, True])
+    (benchmark_root / "docker-run-2026-07-14.log").write_text("docker log", encoding="utf-8")
 
     env = {"AIDER_BENCHMARK_DIR": str(benchmark_root)}
 
@@ -72,9 +73,7 @@ def test_benchmark_report_stats_diffs_and_purge_commands_run(tmp_path, run_cli, 
 
     purge = run_cli("benchmark", ["--purge"], env=env)
     assert purge.returncode == 0, purge.stdout + purge.stderr
-    assert not run_a.exists()
-    assert not run_b.exists()
-    assert not (benchmark_root / "leaderboard.md").exists()
+    assert not benchmark_root.exists()
 
 
 def test_benchmark_command_runs_real_offline_smoke_with_auto_clone(tmp_path, run_cli, init_track_repo):
@@ -1097,6 +1096,7 @@ benchmark.Coder.create = staticmethod(fake_create)
 
     env = {
         "AIDER_BENCHMARK_DIR": str(benchmark_root),
+        "AIDER_BENCHMARK_FORCE_TERMINAL": "1",
         "PYTHONIOENCODING": "utf-8",
         "PYTHONPATH": str(hook_root) + os.pathsep + str(repo_src) + os.pathsep + os.environ.get("PYTHONPATH", ""),
     }
@@ -1205,6 +1205,127 @@ benchmark.Coder.create = staticmethod(fake_create)
 
     for path in root_report_paths:
         assert path.exists()
+
+
+def test_benchmark_progress_output_keeps_changing_during_slow_parallel_run(
+    tmp_path, start_cli, init_track_repo
+):
+    source_parent = tmp_path / "source"
+    benchmark_root = tmp_path / "tmp.benchmarks"
+    tracks_root = source_parent
+    hook_root = tmp_path / "hook"
+    hook_root.mkdir()
+
+    init_track_repo(source_parent, "csharp", ["alpha", "beta", "gamma"])
+
+    sitecustomize_path = hook_root / "sitecustomize.py"
+    repo_src = Path(__file__).resolve().parents[2] / "src"
+
+    sitecustomize_path.write_text(
+        """
+import time
+
+import aider_polyglot_benchmark.benchmark as benchmark
+
+
+class FakeCoder:
+    def __init__(self, main_model, ignore_mentions=None):
+        self.main_model = main_model
+        self.ignore_mentions = ignore_mentions or set()
+        self.last_keyboard_interrupt = False
+        self.total_cost = 0.0
+        self.num_exhausted_context_windows = 0
+        self.num_malformed_responses = 0
+        self.total_tokens_sent = 10
+        self.total_tokens_received = 5
+        self.chat_completion_call_hashes = []
+        self.chat_completion_response_hashes = []
+
+    def show_announcements(self):
+        return None
+
+    def run(self, with_message=None, preproc=False):
+        time.sleep(0.35)
+        return "updated"
+
+
+def fake_create(main_model, edit_format, io, **kwargs):
+    return FakeCoder(main_model, kwargs.get("ignore_mentions"))
+
+
+benchmark.Coder.create = staticmethod(fake_create)
+""".strip(),
+        encoding="utf-8",
+    )
+
+    env = {
+        "AIDER_BENCHMARK_DIR": str(benchmark_root),
+        "PYTHONIOENCODING": "utf-8",
+        "PYTHONPATH": str(hook_root) + os.pathsep + str(repo_src) + os.pathsep + os.environ.get("PYTHONPATH", ""),
+    }
+    proc = start_cli(
+        "benchmark",
+        [
+            "progress-refresh-smoke",
+            "--model",
+            "github/gpt-4o",
+            "--model",
+            "openai/gpt-4o",
+            "--model-parallelism",
+            "2",
+            "--threads",
+            "2",
+            "--report-mode",
+            "end",
+            "--languages",
+            "csharp",
+            "--num-tests",
+            "3",
+            "--exercises-dir",
+            str(tracks_root),
+            "--unsafe",
+            "--no-unit-tests",
+        ],
+        env=env,
+    )
+
+    output_chunks = []
+    read_errors = []
+
+    def reader():
+        try:
+            while True:
+                chunk = proc.stdout.read(1)
+                if not chunk:
+                    break
+                output_chunks.append(chunk)
+        except Exception as exc:
+            read_errors.append(f"stdout-read:{exc}")
+
+    reader_thread = threading.Thread(target=reader)
+    reader_thread.start()
+
+    observed_growth = []
+    previous_length = -1
+    deadline = time.time() + 20
+    while proc.poll() is None and time.time() < deadline:
+        current_length = len(output_chunks)
+        if current_length > previous_length:
+            observed_growth.append(current_length)
+            previous_length = current_length
+        if len(observed_growth) >= 3 and current_length > 0:
+            break
+        time.sleep(0.1)
+
+    returncode = proc.wait(timeout=60)
+    reader_thread.join(timeout=5)
+
+    output = "".join(output_chunks)
+    assert returncode == 0, output
+    assert not read_errors, f"Unexpected output read errors: {read_errors}\nOutput:\n{output}"
+    assert len(observed_growth) >= 3, f"Expected progress output to change multiple times during run. Output:\n{output}"
+    assert "github/gpt-4o" in output
+    assert "openai/gpt-4o" in output
 
 
 def test_benchmark_ctrl_c_cancels_gracefully(tmp_path, start_cli, send_interrupt, init_track_repo):

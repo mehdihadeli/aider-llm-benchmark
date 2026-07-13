@@ -8,7 +8,6 @@ This repo does not require cloning the full Aider source tree. It uses the publi
 - [Aider benchmark harness](#aider-benchmark-harness)
   - [Table of contents](#table-of-contents)
   - [Repo layout](#repo-layout)
-  - [Original documentation](#original-documentation)
   - [Background](#background)
   - [Included dataset](#included-dataset)
   - [Usage](#usage)
@@ -29,7 +28,7 @@ This repo does not require cloning the full Aider source tree. It uses the publi
     - [Clean benchmark temp files](#clean-benchmark-temp-files)
     - [Generate stats for a specific benchmarking directory](#generate-stats-for-a-specific-benchmarking-directory)
     - [Testing](#testing)
-  - [Credits](#credits)
+  - [Acknowledgments](#acknowledgments)
 
 ## Repo layout
 
@@ -41,21 +40,6 @@ This repo is intentionally trimmed to the files needed for the current benchmark
 - `exercises/` is the default ignored destination for cloned Exercism language tracks.
 
 Legacy upstream helper scripts that were not part of the documented Docker or local benchmark flow have been removed.
-
-## Original documentation
-
-This repo is a standalone harness, but the underlying model/runtime behavior comes from upstream projects.
-Use these original docs as the source of truth when local README guidance and upstream behavior diverge:
-
-- [Aider documentation](https://aider.chat/docs/)
-- [Aider usage guide](https://aider.chat/docs/usage.html)
-- [Aider LLM/provider docs](https://aider.chat/docs/llms.html)
-- [Aider configuration and API key docs](https://aider.chat/docs/config.html)
-- [Aider advanced model settings](https://aider.chat/docs/config/adv-model-settings.html)
-- [LiteLLM provider docs](https://docs.litellm.ai/docs/providers)
-- [LiteLLM supported model/provider overview](https://docs.litellm.ai/docs/completion/supported)
-- [Original polyglot benchmark writeup](https://aider.chat/2024/12/21/polyglot.html)
-- [Original polyglot benchmark dataset repo](https://github.com/Aider-AI/polyglot-benchmark)
 
 ## Background
 
@@ -735,6 +719,8 @@ collecting stats not executing unsafe python.
 
 If you want to discard generated benchmark outputs before rebuilding a fresh final report, use the purge mode in `benchmark`. It removes generated aggregate leaderboard files plus the selected benchmark run directories from `tmp.benchmarks`.
 
+When you purge the whole benchmark root with no specific run names, the command now force-clears any remaining generated files under `tmp.benchmarks` such as staged cleanup dirs or `docker-run-*.log` files, then removes the empty `tmp.benchmarks` directory itself.
+
 ```text
 # Remove all benchmark result directories and generated leaderboard files
 uv run benchmark --purge
@@ -937,9 +923,11 @@ It's good practice to commit the repo before starting a benchmark run.
 This way the `model`, `edit_format` and `commit_hash`
 should be enough to reliably reproduce any benchmark run.
 
-## Credits
+## Acknowledgments
 
-This repo builds on work from these upstream projects:
+This repository is based on the Aider engine and is inspired by Aider's benchmark harness, with local enhancements and additional features for standalone benchmark execution, Exercism-style workflows, and integration testing.
+
+It builds on work from these upstream projects:
 
 - [Exercism C# track](https://github.com/exercism/csharp)
 - [Aider](https://github.com/Aider-AI/aider)

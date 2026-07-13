@@ -10,7 +10,7 @@ import time
 import unittest
 import json
 from concurrent.futures import Future
-from contextlib import redirect_stdout
+from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
@@ -41,6 +41,9 @@ from aider_polyglot_benchmark.benchmark import (
     LEGACY_EXERCISES_DIR_DEFAULT,
     normalize_models,
     parse_languages,
+    benchmark_status_color,
+    quiet_aider_io,
+    quiet_output,
     load_tracked_process_ids,
     register_tracked_process,
     refresh_progress_artifacts,
@@ -235,6 +238,37 @@ class TestCleanupBenchmarkArtifacts(unittest.TestCase):
             self.assertFalse(tracking_file.exists())
             self.assertEqual(summary.killed_processes, [123])
             self.assertEqual(summary.failed_processes, [456])
+
+    def test_hard_cleanup_benchmark_artifacts_removes_misc_paths_and_root(self):
+        with TemporaryDirectory() as tmpdir:
+            benchmark_root = Path(tmpdir) / "tmp.benchmarks"
+            run_dir = benchmark_root / "2026-07-05-12-00-00--sample-run"
+            misc_dir = benchmark_root / "scratch"
+            misc_file = benchmark_root / "docker-run-2026-07-14.log"
+            run_dir.mkdir(parents=True)
+            misc_dir.mkdir(parents=True)
+            misc_file.write_text("log", encoding="utf-8")
+
+            summary = hard_cleanup_benchmark_artifacts(benchmark_root=benchmark_root)
+
+            self.assertFalse(benchmark_root.exists())
+            self.assertIn(run_dir, summary.removed_dirs)
+            self.assertIn(misc_dir, summary.removed_dirs)
+            self.assertIn(misc_file, summary.removed_files)
+            self.assertEqual(summary.skipped_dirs, [])
+
+    def test_hard_cleanup_benchmark_artifacts_handles_missing_root(self):
+        with TemporaryDirectory() as tmpdir:
+            benchmark_root = Path(tmpdir) / "tmp.benchmarks"
+
+            summary = hard_cleanup_benchmark_artifacts(benchmark_root=benchmark_root)
+
+            self.assertFalse(benchmark_root.exists())
+            self.assertEqual(summary.removed_files, [])
+            self.assertEqual(summary.removed_dirs, [])
+            self.assertEqual(summary.skipped_dirs, [])
+            self.assertEqual(summary.killed_processes, [])
+            self.assertEqual(summary.failed_processes, [])
 
     def test_remove_tree_retries_after_permission_error(self):
         with TemporaryDirectory() as tmpdir:
@@ -717,9 +751,10 @@ class TestThreadedProgress(unittest.TestCase):
             updated_tasks = []
             next_task_id = 0
 
-            def fake_add_task(description, total, status="queued", visible=True):
+            def fake_add_task(description, total, status="queued", visible=True, color=None):
                 nonlocal next_task_id
                 next_task_id += 1
+                effective_color = color or benchmark_status_color(status)
                 added_tasks.append(
                     {
                         "id": next_task_id,
@@ -727,11 +762,14 @@ class TestThreadedProgress(unittest.TestCase):
                         "total": total,
                         "status": status,
                         "visible": visible,
+                        "color": effective_color,
                     }
                 )
                 return next_task_id
 
             def fake_update_task(task_id, advance=0, status=None, **kwargs):
+                if status is not None and "color" not in kwargs:
+                    kwargs["color"] = benchmark_status_color(status)
                 updated_tasks.append(
                     {
                         "task_id": task_id,
@@ -784,11 +822,13 @@ class TestThreadedProgress(unittest.TestCase):
             self.assertEqual(status, 0)
             self.assertEqual(len(added_tasks), 3)
             self.assertEqual(added_tasks[0]["description"], "github_copilot/gpt-4")
+            self.assertEqual(added_tasks[0]["color"], benchmark_status_color("threads=2"))
             self.assertEqual(
                 [task["description"] for task in added_tasks[1:]],
-                ["gpt-4 worker 1", "gpt-4 worker 2"],
+                ["  |- gpt-4 worker 1", "  |- gpt-4 worker 2"],
             )
             self.assertTrue(all(task["visible"] is False for task in added_tasks[1:]))
+            self.assertTrue(all(task["color"] == benchmark_status_color("idle") for task in added_tasks[1:]))
 
             worker_updates = [
                 update for update in updated_tasks
@@ -797,6 +837,47 @@ class TestThreadedProgress(unittest.TestCase):
             self.assertTrue(any(update.get("visible") is True for update in worker_updates))
             self.assertTrue(any((update.get("status") or "").startswith("running ") for update in worker_updates))
             self.assertTrue(any(update.get("visible") is False and update.get("status") == "idle" for update in worker_updates))
+            self.assertTrue(any(update.get("status") == "complete" and update.get("color") == "green" for update in updated_tasks))
+            self.assertTrue(any((update.get("status") or "").startswith("running ") and update.get("color") == "blue" for update in worker_updates))
+            self.assertTrue(any(update.get("status") == "idle" and update.get("color") == "bright_black" for update in worker_updates))
+
+    def test_benchmark_status_color_maps_common_states(self):
+        self.assertEqual(benchmark_status_color("threads=3"), "bright_black")
+        self.assertEqual(benchmark_status_color("queued alpha"), "bright_black")
+        self.assertEqual(benchmark_status_color("idle"), "bright_black")
+        self.assertEqual(benchmark_status_color("running alpha"), "bright_cyan")
+        self.assertEqual(benchmark_status_color("done alpha"), "green")
+        self.assertEqual(benchmark_status_color("complete"), "green")
+        self.assertEqual(benchmark_status_color("cancelled"), "yellow")
+        self.assertEqual(benchmark_status_color("error timeout"), "red")
+
+    def test_quiet_output_redirects_stdout_only_when_not_verbose(self):
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+
+        with redirect_stdout(stdout), redirect_stderr(stderr):
+            with quiet_output(False):
+                print("stdout leak")
+                print("stderr leak", file=sys.stderr)
+
+        self.assertEqual(stdout.getvalue(), "")
+        self.assertEqual(stderr.getvalue(), "stderr leak\n")
+
+    def test_quiet_aider_io_rebinds_console_for_non_verbose_runs(self):
+        class FakeIO:
+            def __init__(self):
+                self.pretty = True
+                self.console = None
+
+        io_obj = FakeIO()
+
+        quiet_aider_io(io_obj, verbose=False)
+
+        self.assertFalse(io_obj.pretty)
+        sink = getattr(io_obj.console, "file", None)
+        self.assertIsNotNone(sink)
+        io_obj.console.print("suppressed")
+        self.assertIn("suppressed", sink.getvalue())
 
 
 class TestModelNormalization(unittest.TestCase):

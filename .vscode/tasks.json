@@ -518,6 +518,211 @@
 			],
 			"isBackground": false,
 			"group": "test"
+		},
+		{
+			"label": "Validate purge force cleanup tests",
+			"type": "shell",
+			"command": "uv",
+			"args": [
+				"run",
+				"python",
+				"-m",
+				"pytest",
+				"-q",
+				"tests/unit/test_benchmark.py",
+				"tests/integration/test_benchmark_cli.py",
+				"-k",
+				"hard_cleanup_benchmark_artifacts_removes_misc_paths_and_root or report_stats_diffs_and_purge_commands_run"
+			],
+			"isBackground": false,
+			"group": "test"
+		},
+		{
+			"label": "Sanity-check real purge command",
+			"type": "shell",
+			"command": "uv",
+			"args": [
+				"run",
+				"benchmark",
+				"--purge"
+			],
+			"isBackground": false,
+			"group": "test"
+		},
+		{
+			"label": "Run missing-root purge unit test",
+			"type": "shell",
+			"command": "uv",
+			"args": [
+				"run",
+				"python",
+				"-m",
+				"pytest",
+				"-q",
+				"tests/unit/test_benchmark.py",
+				"-k",
+				"handles_missing_root"
+			],
+			"isBackground": false,
+			"group": "test"
+		},
+		{
+			"label": "Validate quiet output and worker tree labels",
+			"type": "shell",
+			"command": "uv",
+			"args": [
+				"run",
+				"python",
+				"-m",
+				"pytest",
+				"-q",
+				"tests/unit/test_benchmark.py",
+				"-k",
+				"quiet_output_redirects_stdout_and_stderr_when_not_verbose or emits_worker_slot_progress_updates"
+			],
+			"isBackground": false,
+			"group": "test"
+		},
+		{
+			"label": "Validate aider output suppression",
+			"type": "shell",
+			"command": "uv",
+			"args": [
+				"run",
+				"python",
+				"-m",
+				"pytest",
+				"-q",
+				"tests/unit/test_benchmark.py",
+				"-k",
+				"quiet_output_redirects_stdout_and_stderr_when_not_verbose or quiet_aider_io_rebinds_console_for_non_verbose_runs or emits_worker_slot_progress_updates"
+			],
+			"isBackground": false,
+			"group": "test"
+		},
+		{
+			"label": "Validate progress repaint fix",
+			"type": "shell",
+			"command": "uv",
+			"args": [
+				"run",
+				"python",
+				"-m",
+				"pytest",
+				"-q",
+				"tests/unit/test_benchmark.py",
+				"-k",
+				"quiet_output_redirects_stdout_only_when_not_verbose or quiet_aider_io_rebinds_console_for_non_verbose_runs or emits_worker_slot_progress_updates"
+			],
+			"isBackground": false,
+			"group": "test"
+		},
+		{
+			"label": "Run progress refresh smoke test",
+			"type": "shell",
+			"command": "uv",
+			"args": [
+				"run",
+				"python",
+				"-m",
+				"pytest",
+				"-q",
+				"tests/integration/test_benchmark_cli.py",
+				"-k",
+				"progress_output_keeps_changing_during_slow_parallel_run"
+			],
+			"isBackground": false,
+			"group": "test"
+		},
+		{
+			"label": "Check uv TTY status",
+			"type": "shell",
+			"command": "uv",
+			"args": [
+				"run",
+				"python",
+				"-c",
+				"import sys; print('stdout', sys.stdout.isatty()); print('stderr', sys.stderr.isatty())"
+			],
+			"isBackground": false,
+			"group": "test"
+		},
+		{
+			"label": "Check uv TTY status safe",
+			"type": "shell",
+			"command": "uv",
+			"args": [
+				"run",
+				"python",
+				"-c",
+				"import sys; print(sys.stdout.isatty()); print(sys.stderr.isatty())"
+			],
+			"isBackground": false,
+			"group": "test"
+		},
+		{
+			"label": "Check Rich interactive flags",
+			"type": "shell",
+			"command": "uv",
+			"args": [
+				"run",
+				"python",
+				"-c",
+				"from rich.console import Console; c=Console(stderr=True, highlight=False); print(c.is_terminal); print(c.is_dumb_terminal); print(c.is_interactive)"
+			],
+			"isBackground": false,
+			"group": "test"
+		},
+		{
+			"label": "Validate progress color states",
+			"type": "shell",
+			"command": "uv",
+			"args": [
+				"run",
+				"python",
+				"-m",
+				"pytest",
+				"-q",
+				"tests/unit/test_benchmark.py",
+				"-k",
+				"emits_worker_slot_progress_updates"
+			],
+			"isBackground": false,
+			"group": "test"
+		},
+		{
+			"label": "Validate status color mapping",
+			"type": "shell",
+			"command": "uv",
+			"args": [
+				"run",
+				"python",
+				"-m",
+				"pytest",
+				"-q",
+				"tests/unit/test_benchmark.py",
+				"-k",
+				"benchmark_status_color_maps_common_states or emits_worker_slot_progress_updates"
+			],
+			"isBackground": false,
+			"group": "test"
+		},
+		{
+			"label": "Validate light blue progress color",
+			"type": "shell",
+			"command": "uv",
+			"args": [
+				"run",
+				"python",
+				"-m",
+				"pytest",
+				"-q",
+				"tests/unit/test_benchmark.py",
+				"-k",
+				"benchmark_status_color_maps_common_states"
+			],
+			"isBackground": false,
+			"group": "test"
 		}
 	]
 }

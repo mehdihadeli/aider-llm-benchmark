@@ -133,7 +133,20 @@ BENCHMARK_REPORT_FILENAMES = (
 )
 BENCHMARK_PROCESS_TRACKING_FILENAME = ".benchmark-pids.json"
 BENCHMARK_RUN_DIR_RE = re.compile(r"^\d{4}-\d{2}-\d{2}-\d{2}-\d{2}-\d{2}--")
-BENCHMARK_CONSOLE = Console(stderr=True, highlight=False)
+_BENCHMARK_FORCE_TERMINAL_ENV = os.environ.get("AIDER_BENCHMARK_FORCE_TERMINAL")
+_BENCHMARK_FORCE_LIVE = (
+    True
+    if _BENCHMARK_FORCE_TERMINAL_ENV == "1"
+    else False
+    if _BENCHMARK_FORCE_TERMINAL_ENV == "0"
+    else sys.stderr.isatty()
+)
+BENCHMARK_CONSOLE = Console(
+    stderr=True,
+    highlight=False,
+    force_terminal=_BENCHMARK_FORCE_LIVE,
+    force_interactive=_BENCHMARK_FORCE_LIVE,
+)
 _BENCHMARK_PROGRESS = None
 _BENCHMARK_PROGRESS_LOCK = threading.RLock()
 
@@ -176,11 +189,44 @@ app = typer.Typer(
 def quiet_output(verbose):
     if verbose:
         return nullcontext()
-    return redirect_stdout(io_module.StringIO())
+    sink = io_module.StringIO()
+
+    @contextmanager
+    def _quiet_streams():
+        with redirect_stdout(sink):
+            yield
+
+    return _quiet_streams()
 
 
 def benchmark_print(message="", style=None):
     BENCHMARK_CONSOLE.print(message, style=style)
+
+
+def benchmark_status_color(status):
+    normalized = (status or "").strip().lower()
+    if not normalized:
+        return "bright_cyan"
+    if normalized == "complete" or normalized.startswith("done "):
+        return "green"
+    if "cancel" in normalized:
+        return "yellow"
+    if "error" in normalized or "fail" in normalized:
+        return "red"
+    if normalized == "idle" or normalized.startswith("queued ") or normalized.startswith("threads="):
+        return "bright_black"
+    if normalized.startswith("running "):
+        return "bright_cyan"
+    return "bright_cyan"
+
+
+def quiet_aider_io(io, verbose):
+    if verbose:
+        return io
+
+    io.pretty = False
+    io.console = Console(file=io_module.StringIO(), force_terminal=False, no_color=True, highlight=False)
+    return io
 
 
 def write_text_atomic(path, content, encoding="utf-8"):
@@ -201,13 +247,18 @@ def write_text_atomic(path, content, encoding="utf-8"):
 
 def make_benchmark_progress():
     return Progress(
-        SpinnerColumn(),
-        TextColumn("[bold cyan]{task.description}"),
-        BarColumn(),
-        TextColumn("{task.completed}/{task.total}"),
+        SpinnerColumn(style="{task.fields[color]}"),
+        TextColumn("[bold {task.fields[color]}]{task.description}"),
+        BarColumn(
+            style="bright_cyan",
+            complete_style="bright_cyan",
+            finished_style="green",
+            pulse_style="bright_cyan",
+        ),
+        TextColumn("[{task.fields[color]}]{task.completed}/{task.total}"),
         TimeElapsedColumn(),
         TimeRemainingColumn(),
-        TextColumn("{task.fields[status]}"),
+        TextColumn("[{task.fields[color]}]{task.fields[status]}"),
         console=BENCHMARK_CONSOLE,
         transient=False,
     )
@@ -237,11 +288,17 @@ def benchmark_progress(enabled=True):
                 _BENCHMARK_PROGRESS = None
 
 
-def add_benchmark_task(description, total, status="queued", visible=True):
+def add_benchmark_task(description, total, status="queued", visible=True, color=None):
     with _BENCHMARK_PROGRESS_LOCK:
         if _BENCHMARK_PROGRESS is None:
             return None
-        return _BENCHMARK_PROGRESS.add_task(description, total=total, status=status, visible=visible)
+        return _BENCHMARK_PROGRESS.add_task(
+            description,
+            total=total,
+            status=status,
+            visible=visible,
+            color=color or benchmark_status_color(status),
+        )
 
 
 def update_benchmark_task(task_id, advance=0, status=None, **kwargs):
@@ -251,6 +308,7 @@ def update_benchmark_task(task_id, advance=0, status=None, **kwargs):
         update_kwargs = {"advance": advance}
         if status is not None:
             update_kwargs["status"] = status
+            update_kwargs.setdefault("color", benchmark_status_color(status))
         update_kwargs.update(kwargs)
         _BENCHMARK_PROGRESS.update(task_id, **update_kwargs)
 
@@ -706,8 +764,6 @@ def run_single_model_benchmark(
 ):
     if verbose:
         print(f"Running benchmark for model: {model_name}")
-    else:
-        benchmark_print(f"Running benchmark for model: {model_name}", style="bold cyan")
     return run_benchmark_for_model(
         run_dirname,
         model_name,
@@ -811,6 +867,23 @@ def remove_tree_with_retries(path, attempts=3, delay_seconds=0.1):
         if attempt < attempts - 1:
             cancel_aware_sleep(delay_seconds * (attempt + 1))
     return not Path(path).exists()
+
+
+def remove_file_with_retries(path, attempts=3, delay_seconds=0.1):
+    path = Path(path)
+    for attempt in range(attempts):
+        try:
+            if path.exists():
+                os.chmod(path, stat.S_IWRITE | stat.S_IREAD)
+                path.unlink()
+        except OSError:
+            if attempt == attempts - 1:
+                return False
+        if not path.exists():
+            return True
+        if attempt < attempts - 1:
+            cancel_aware_sleep(delay_seconds * (attempt + 1))
+    return not path.exists()
 
 
 def stage_dir_for_cleanup(path, benchmark_root):
@@ -1060,10 +1133,13 @@ def hard_cleanup_benchmark_artifacts(dirnames=None, benchmark_root=BENCHMARK_DNA
     )
 
     if dirnames is None:
-        remaining_candidates = [
-            path for path in benchmark_root.iterdir()
-            if is_benchmark_result_dir(path) or is_staged_cleanup_dir(path)
-        ]
+        if benchmark_root.exists():
+            remaining_candidates = [
+                path for path in benchmark_root.iterdir()
+                if is_benchmark_result_dir(path) or is_staged_cleanup_dir(path)
+            ]
+        else:
+            remaining_candidates = []
     else:
         remaining_candidates = [
             Path(dirname) for dirname in dirnames
@@ -1102,18 +1178,52 @@ def hard_cleanup_benchmark_artifacts(dirnames=None, benchmark_root=BENCHMARK_DNA
                 retried_skipped_dirs.append(candidate)
         forced_skipped_dirs = retried_skipped_dirs
 
+    removed_misc_paths = []
+    skipped_misc_paths = []
+    if dirnames is None and benchmark_root.exists():
+        for path in list(benchmark_root.iterdir()):
+            was_dir = path.is_dir()
+            removed = False
+            if was_dir:
+                removed = remove_tree_with_retries(path, attempts=5, delay_seconds=0.2)
+            else:
+                removed = remove_file_with_retries(path, attempts=5, delay_seconds=0.2)
+
+            if removed:
+                removed_misc_paths.append((path, was_dir))
+            else:
+                skipped_misc_paths.append(path)
+
+        if not skipped_misc_paths and benchmark_root.exists():
+            try:
+                benchmark_root.rmdir()
+            except OSError:
+                skipped_misc_paths.append(benchmark_root)
+
     removed_files = cleanup_summary.removed_files + [
         path for path in second_pass_summary.removed_files if path not in cleanup_summary.removed_files
     ]
+    for path, was_dir in removed_misc_paths:
+        if not was_dir and path not in removed_files:
+            removed_files.append(path)
+
     removed_dirs = cleanup_summary.removed_dirs + [
         path for path in second_pass_summary.removed_dirs if path not in cleanup_summary.removed_dirs
     ]
     for path in forced_removed_dirs:
         if path not in removed_dirs:
             removed_dirs.append(path)
+    for path, was_dir in removed_misc_paths:
+        if was_dir and path not in removed_dirs:
+            removed_dirs.append(path)
 
     skipped_dirs = []
-    for collection in (cleanup_summary.skipped_dirs, second_pass_summary.skipped_dirs, forced_skipped_dirs):
+    for collection in (
+        cleanup_summary.skipped_dirs,
+        second_pass_summary.skipped_dirs,
+        forced_skipped_dirs,
+        skipped_misc_paths,
+    ):
         for path in collection:
             if path not in skipped_dirs:
                 skipped_dirs.append(path)
@@ -1317,7 +1427,7 @@ def run_benchmark_for_model(
         model_label = model.rsplit("/", 1)[-1]
         worker_task_ids = [
             add_benchmark_task(
-                f"{model_label} worker {index + 1}",
+                f"  |- {model_label} worker {index + 1}",
                 total=1,
                 status="idle",
                 visible=False,
@@ -1472,9 +1582,9 @@ def run_benchmark_for_model(
         summarize_results(dirname, quiet=not verbose)
         return 2
 
-    update_benchmark_task(progress_task, status="complete")
+    update_benchmark_task(progress_task, status="complete", color="green")
     for worker_task_id in worker_task_ids:
-        update_benchmark_task(worker_task_id, visible=False, status="complete")
+        update_benchmark_task(worker_task_id, visible=False, status="complete", color="green")
     if verbose:
         print()
         print()
@@ -2290,11 +2400,13 @@ def run_test_real(
 
     instructions += prompts.instructions_addendum.format(file_list=file_list)
 
-    io = InputOutput(
-        pretty=False,
-        yes=True,
-        chat_history_file=history_fname,
-    )
+    with quiet_output(verbose):
+        io = InputOutput(
+            pretty=False,
+            yes=True,
+            chat_history_file=history_fname,
+        )
+    quiet_aider_io(io, verbose)
 
     # weak_model_name = model_name
     weak_model_name = None
