@@ -1,8 +1,11 @@
 import json
 import os
 import shutil
+import signal
 import subprocess
 import sys
+import threading
+import time
 from pathlib import Path
 
 import pytest
@@ -25,6 +28,14 @@ def _resolve_console_script(command_name: str) -> Path:
     raise FileNotFoundError(f"Console script not found for {command_name}: {candidates}")
 
 
+def _send_interrupt(process: subprocess.Popen) -> None:
+    """Send the platform equivalent of Ctrl+C to a subprocess."""
+    if sys.platform == "win32":
+        process.send_signal(signal.CTRL_BREAK_EVENT)
+    else:
+        process.send_signal(signal.SIGINT)
+
+
 @pytest.fixture
 def run_cli():
     def _run_cli(command_name, args=None, cwd=REPO_ROOT, env=None):
@@ -45,6 +56,37 @@ def run_cli():
         )
 
     return _run_cli
+
+
+@pytest.fixture
+def start_cli():
+    def _start_cli(command_name, args=None, cwd=REPO_ROOT, env=None, **popen_kwargs):
+        merged_env = os.environ.copy()
+        if env:
+            merged_env.update(env)
+        command = [_resolve_console_script(command_name)]
+        if args:
+            command.extend(args)
+        kwargs = dict(
+            cwd=cwd,
+            env=merged_env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+        )
+        if sys.platform == "win32":
+            kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
+        kwargs.update(popen_kwargs)
+        return subprocess.Popen(command, **kwargs)
+
+    return _start_cli
+
+
+@pytest.fixture
+def send_interrupt():
+    return _send_interrupt
 
 
 def _git(args, cwd):

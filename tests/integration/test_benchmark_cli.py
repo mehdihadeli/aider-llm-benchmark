@@ -2,6 +2,8 @@ import json
 import os
 import subprocess
 import sys
+import threading
+import time
 from pathlib import Path
 
 
@@ -31,7 +33,7 @@ def test_benchmark_report_stats_diffs_and_purge_commands_run(tmp_path, run_cli, 
 
     report = run_cli("benchmark", ["--report"], env=env)
     assert report.returncode == 0, report.stdout + report.stderr
-    assert (benchmark_root / "leaderboard.csv").exists()
+    assert (benchmark_root / "leaderboard.md").exists()
     assert (benchmark_root / "leaderboard.html").exists()
     assert (benchmark_root / "polyglot_leaderboard.yml").exists()
 
@@ -46,7 +48,7 @@ def test_benchmark_report_stats_diffs_and_purge_commands_run(tmp_path, run_cli, 
     assert purge.returncode == 0, purge.stdout + purge.stderr
     assert not run_a.exists()
     assert not run_b.exists()
-    assert not (benchmark_root / "leaderboard.csv").exists()
+    assert not (benchmark_root / "leaderboard.md").exists()
 
 
 def test_benchmark_command_runs_real_offline_smoke_with_auto_clone(tmp_path, run_cli, init_track_repo):
@@ -134,7 +136,7 @@ def test_benchmark_multi_model_offline_smoke_generates_per_model_dirs_and_aggreg
     for run_dir in run_dirs:
         assert (run_dir / "csharp" / "exercises" / "practice" / "alpha" / ".aider.results.json").exists()
 
-    assert (benchmark_root / "leaderboard.csv").exists()
+    assert (benchmark_root / "leaderboard.md").exists()
     assert (benchmark_root / "leaderboard.html").exists()
     assert (benchmark_root / "polyglot_leaderboard.yml").exists()
 
@@ -195,13 +197,13 @@ def test_benchmark_separate_model_runs_then_aggregate_report(
     report = run_cli("benchmark", ["--report"], env=env)
     assert report.returncode == 0, report.stdout + report.stderr
 
-    assert (benchmark_root / "leaderboard.csv").exists()
+    assert (benchmark_root / "leaderboard.md").exists()
     assert (benchmark_root / "leaderboard.html").exists()
     assert (benchmark_root / "polyglot_leaderboard.yml").exists()
 
-    csv_text = (benchmark_root / "leaderboard.csv").read_text(encoding="utf-8")
-    assert "github/gpt-4o" in csv_text
-    assert "github/gpt-4.1" in csv_text
+    markdown_text = (benchmark_root / "leaderboard.md").read_text(encoding="utf-8")
+    assert "github/gpt-4o" in markdown_text
+    assert "github/gpt-4.1" in markdown_text
 
 
 def test_benchmark_num_tests_limits_exercises(tmp_path, run_cli, init_track_repo):
@@ -407,4 +409,76 @@ benchmark.Coder.create = staticmethod(fake_create)
         > max(github_entry["started"], openai_entry["started"])
         for github_entry in github_entries
         for openai_entry in openai_entries
+    )
+
+
+def test_benchmark_ctrl_c_cancels_gracefully(tmp_path, start_cli, send_interrupt, init_track_repo):
+    source_parent = tmp_path / "source"
+    benchmark_root = tmp_path / "tmp.benchmarks"
+    tracks_root = tmp_path / "tracks"
+    exercises = [f"ex{i:03d}" for i in range(30)]
+    init_track_repo(source_parent, "csharp", exercises)
+
+    env = {
+        "AIDER_BENCHMARK_DIR": str(benchmark_root),
+        "EXERCISM_TRACK_REPO_BASE_URL": source_parent.as_uri(),
+    }
+    proc = start_cli(
+        "benchmark",
+        [
+            "ctrl-c-test",
+            "--model",
+            "github/gpt-4.1",
+            "--languages",
+            "csharp",
+            "--num-tests",
+            "30",
+            "--exercises-dir",
+            str(tracks_root),
+            "--unsafe",
+            "--no-aider",
+            "--no-unit-tests",
+        ],
+        env=env,
+    )
+
+    output_lines = []
+    signal_sent = threading.Event()
+
+    def reader():
+        try:
+            for line in proc.stdout:
+                output_lines.append(line)
+                if not signal_sent.is_set() and "fnames:" in line:
+                    try:
+                        send_interrupt(proc)
+                    except (OSError, ProcessLookupError):
+                        pass
+                    signal_sent.set()
+        except Exception:
+            pass
+
+    reader_thread = threading.Thread(target=reader)
+    reader_thread.start()
+
+    try:
+        returncode = proc.wait(timeout=30)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        reader_thread.join(timeout=5)
+        output = "".join(output_lines)
+        raise AssertionError(f"Benchmark did not exit after Ctrl+C. Output:\n{output}")
+
+    reader_thread.join(timeout=5)
+    output = "".join(output_lines)
+
+    assert signal_sent.is_set(), (
+        "Ctrl+C was never sent; benchmark finished before processing started. "
+        f"Output:\n{output}"
+    )
+    assert returncode == 2, output
+    assert "Benchmark cancelled" in output, output
+    assert (
+        (benchmark_root / "leaderboard.md").exists()
+        or (benchmark_root / "polyglot_leaderboard.yml").exists()
     )

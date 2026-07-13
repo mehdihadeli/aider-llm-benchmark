@@ -12,6 +12,51 @@
 			"type": "shell",
 			"command": "uv run python -m aider_polyglot_benchmark.benchmark --report",
 			"group": "build"
+		},
+		{
+			"label": "Run benchmark unit tests",
+			"type": "shell",
+			"command": "uv",
+			"args": [
+				"run",
+				"python",
+				"-m",
+				"pytest",
+				"-q",
+				"tests/unit/test_benchmark.py"
+			],
+			"isBackground": false,
+			"group": "build"
+		},
+		{
+			"label": "Run Ctrl+C integration test",
+			"type": "shell",
+			"command": "uv run python -m pytest tests/integration/test_benchmark_cli.py::test_benchmark_ctrl_c_cancels_gracefully -v",
+			"group": "test"
+		},
+		{
+			"label": "Run Ctrl+C integration test",
+			"type": "shell",
+			"command": "uv run python -m pytest tests/integration/test_benchmark_cli.py::test_benchmark_ctrl_c_cancels_gracefully -v",
+			"group": "test"
+		},
+		{
+			"label": "Simple echo test",
+			"type": "shell",
+			"command": "echo hello world",
+			"group": "test"
+		},
+		{
+			"label": "Run Ctrl+C integration test",
+			"type": "shell",
+			"command": "uv run python -m pytest tests/integration/test_benchmark_cli.py::test_benchmark_ctrl_c_cancels_gracefully -v",
+			"group": "test"
+		},
+		{
+			"label": "Run Ctrl+C integration test",
+			"type": "shell",
+			"command": "uv run python -m pytest tests/integration/test_benchmark_cli.py::test_benchmark_ctrl_c_cancels_gracefully -v",
+			"group": "test"
 		}
 	]
 }

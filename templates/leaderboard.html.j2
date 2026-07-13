@@ -99,7 +99,7 @@
       .summary-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     }
     @media (min-width: 1280px) {
-      .summary-grid { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+      .summary-grid { grid-template-columns: repeat(6, minmax(0, 1fr)); }
     }
     .summary-card {
       border: 1px solid var(--border);
@@ -117,8 +117,20 @@
     .summary-value {
       margin-top: 0.25rem;
       color: var(--text-strong);
-      font-size: 1.5rem;
-      font-weight: 600;
+      font-size: 1.6rem;
+      font-weight: 700;
+    }
+    .summary-subvalue {
+      margin-top: 0.25rem;
+      color: var(--text-muted);
+      font-size: 0.8rem;
+      line-height: 1.35;
+    }
+    .summary-count {
+      margin-top: 0.35rem;
+      color: var(--text-muted);
+      font-size: 0.72rem;
+      line-height: 1.35;
     }
     .table-shell {
       overflow: hidden;
@@ -503,22 +515,37 @@
       <div class="summary-card">
         <div class="summary-label">Models</div>
         <div class="summary-value">{{ summary.total_models }}</div>
+        <div class="summary-subvalue">Active benchmark entries</div>
       </div>
       <div class="summary-card">
-        <div class="summary-label">Use Cases Run</div>
-        <div class="summary-value">{{ summary.total_test_cases }}</div>
+        <div class="summary-label">Avg Use Cases per Model</div>
+        <div class="summary-value">{{ '%.1f'|format(summary.use_cases_completion_rate) }}%</div>
+        <div class="summary-subvalue">of available cases</div>
+        <div class="summary-count">{{ '%.1f'|format(summary.use_cases_per_model) }} average use cases per model</div>
       </div>
       <div class="summary-card">
-        <div class="summary-label">Use Cases / Model</div>
-        <div class="summary-value">{{ '%.1f'|format(summary.use_cases_per_model) }}</div>
+        <div class="summary-label">Avg Successes per Model</div>
+        <div class="summary-value">{{ '%.1f'|format(summary.avg_success_rate) }}%</div>
+        <div class="summary-subvalue">success rate</div>
+        <div class="summary-count">{{ '%.1f'|format(summary.avg_successes_per_model) }} average successes per model</div>
       </div>
       <div class="summary-card">
-        <div class="summary-label">Avg Percent Correct</div>
-        <div class="summary-value">{{ '%.1f'|format(summary.avg_percent_correct) }}%</div>
-      </div>
-      <div class="summary-card">
-        <div class="summary-label">Avg Failure Rate</div>
+        <div class="summary-label">Avg Failures per Model</div>
         <div class="summary-value">{{ '%.1f'|format(summary.avg_failure_rate) }}%</div>
+        <div class="summary-subvalue">failure rate</div>
+        <div class="summary-count">{{ '%.1f'|format(summary.avg_failures_per_model) }} average failures per model</div>
+      </div>
+      <div class="summary-card">
+        <div class="summary-label">Avg First-Try Successes per Model</div>
+        <div class="summary-value">{{ '%.1f'|format(summary.avg_first_try_success_rate) }}%</div>
+        <div class="summary-subvalue">first-try rate</div>
+        <div class="summary-count">{{ '%.1f'|format(summary.avg_first_try_successes) }} average first-try successes per model</div>
+      </div>
+      <div class="summary-card">
+        <div class="summary-label">Avg Second-Try Successes per Model</div>
+        <div class="summary-value">{{ '%.1f'|format(summary.avg_second_try_success_rate) }}%</div>
+        <div class="summary-subvalue">second-try rate</div>
+        <div class="summary-count">{{ '%.1f'|format(summary.avg_second_try_successes) }} average second-try successes per model</div>
       </div>
     </div>
 

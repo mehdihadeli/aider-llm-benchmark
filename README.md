@@ -140,7 +140,13 @@ host machine.
 
 This README assumes Git Bash on Windows for local shell commands.
 
-Provision a compatible Python 3.12 environment and install dependencies once:
+Prerequisites:
+
+- install `uv` first if it is not already available in your shell
+- use Python `3.11` or newer; the recommended local setup below uses Python `3.12`
+- Docker in this repo currently uses Python `3.11`, which is also supported by the package metadata
+
+Provision a compatible Python environment and install dependencies once:
 
 ```bash
 uv python install 3.12
@@ -156,9 +162,10 @@ Activate the local `.venv` before running `benchmark` directly:
 source .venv/Scripts/activate
 ```
 
-After activation you can use bare entry points such as `benchmark`, `clone-exercism-tracks`,
-`cleanup-exercism-tracks`, and `leaderboard-report`. If the virtual environment is not activated,
-run commands through `uv run` instead.
+On Windows Git Bash, the installed entry points are `.exe` launchers inside `.venv/Scripts`.
+That means the most portable invocation is still `uv run ...`, even after activation. If you
+want to call the entry points directly, use `benchmark.exe`, `clone-exercism-tracks.exe`,
+`cleanup-exercism-tracks.exe`, and `leaderboard-report.exe`.
 
 ### Clone Exercism tracks
 
@@ -452,7 +459,7 @@ request. After authorization, credentials are cached locally and reused for
 future runs.
 
 ```bash
-uv run benchmark kimi-openai-smoke --model github_copilot/kimi-k2.7-code --model github_copilot/gpt-5.4-mini --model github_copilot/gpt-4.1 --model github_copilot/gpt-5.4 --model github_copilot/claude-sonnet-4.6 --languages csharp --num-tests 1 --threads 1 --unsafe
+
 ```
 
 #### OpenRouter
@@ -563,13 +570,13 @@ Local runs execute untrusted model-generated code. Use Docker when possible.
 If you accept the risk for local testing, pass `--unsafe` explicitly.
 
 ```bash
-benchmark my-run --model github/gpt-4o --languages csharp --threads 1 --num-tests 3 --unsafe
+uv run benchmark my-run --model github/gpt-4o --languages csharp --threads 1 --num-tests 3 --unsafe
 
 # Or use OpenRouter
-benchmark my-run --model openrouter/openai/gpt-4o --languages csharp --threads 1 --num-tests 3 --unsafe
+uv run benchmark my-run --model openrouter/openai/gpt-4o --languages csharp --threads 1 --num-tests 3 --unsafe
 
 # Or benchmark multiple models and auto-generate aggregate reports
-benchmark my-compare --model github/gpt-4o --model github/gpt-4.1 --languages csharp --threads 1 --num-tests 5 --unsafe
+uv run benchmark my-compare --model github/gpt-4o --model github/gpt-4.1 --languages csharp --threads 1 --num-tests 5 --unsafe
 ```
 
 If you prefer not to depend on a manually activated `.venv`, prefix with `uv run` (e.g. `uv run benchmark ...`).
@@ -607,9 +614,11 @@ You can run `benchmark --help` or `uv run benchmark --help`. The help output now
 
 Every benchmark run writes a per-run `benchmark-report.yml` inside that run directory. When you invoke `benchmark` with one or more models, it also writes aggregate outputs at the end of the batch under `tmp.benchmarks/`:
 
-- `leaderboard.csv`
+- `leaderboard.md`
 - `leaderboard.html`
 - `polyglot_leaderboard.yml`
+
+Recommended default for sharing results with other people is `leaderboard.md`. It is the easiest format to paste into chat, issues, PRs, or notes. Use `leaderboard.html` when you want the interactive table view, and `polyglot_leaderboard.yml` when you want machine-friendly structured data.
 
 For a two-model run like `github-multi-sample`, you will also get one run directory per model, for example:
 
@@ -618,24 +627,70 @@ For a two-model run like `github-multi-sample`, you will also get one run direct
 
 That means the common workflow is now a single `benchmark` command.
 
+You can also run multiple models in one command by repeating `--model`, and the harness will generate the aggregate report for that batch automatically when the run finishes.
+
+For example:
+
+```bash
+uv run benchmark kimi-gpt4.1 --model github_copilot/kimi-k2.7-code --model github_copilot/gpt-4.1 --languages csharp --num-tests 1 --threads 1 --unsafe
+```
+
+That single command creates one run directory per model plus the combined aggregate outputs under `tmp.benchmarks/`.
+
 But you do not need to benchmark all models in one command. You can also run models separately and generate the final combined report later.
+
+Practical workflow for two or more separate model runs:
+
+1. Run one command per model.
+2. Let each command finish completely.
+3. Rebuild one combined leaderboard after the runs are done.
+
+Example with two separate commands:
+
+```bash
+uv run benchmark gpt41-run --model github/gpt-4.1 --languages csharp --num-tests 5 --unsafe
+uv run benchmark sonnet-run --model anthropic/claude-sonnet-4 --languages csharp --num-tests 5 --unsafe
+```
+
+Each command creates its own timestamped run directory under `tmp.benchmarks/`, for example:
+
+```text
+tmp.benchmarks/2026-07-13-10-00-00--gpt41-run
+tmp.benchmarks/2026-07-13-10-30-00--sonnet-run
+```
+
+After both runs complete, you have 2 options.
+
+Rebuild one report from every run currently present under `tmp.benchmarks/`:
+
+```bash
+uv run benchmark --report
+```
+
+Or rebuild one report from only the specific runs you want to include:
+
+```bash
+uv run benchmark 2026-07-13-10-00-00--gpt41-run 2026-07-13-10-30-00--sonnet-run --report
+```
+
+This same pattern works for more than two runs. Run each model separately first, then pass all desired run directories to one final `--report` command.
 
 For example, these can happen as separate runs at different times:
 
 ```bash
-benchmark gpt41-run --model github/gpt-4.1 --languages csharp --num-tests 5 --unsafe
-benchmark sonnet-run --model anthropic/claude-sonnet-4 --languages csharp --num-tests 5 --unsafe
-benchmark gemini-run --model gemini/gemini-2.5-flash --languages csharp --num-tests 5 --unsafe
+uv run benchmark gpt41-run --model github/gpt-4.1 --languages csharp --num-tests 5 --unsafe
+uv run benchmark sonnet-run --model anthropic/claude-sonnet-4 --languages csharp --num-tests 5 --unsafe
+uv run benchmark gemini-run --model gemini/gemini-2.5-flash --languages csharp --num-tests 5 --unsafe
 ```
 
 Then rebuild the final aggregate leaderboard from previous runs without re-running any benchmark:
 
 ```bash
 # Rebuild from all run directories under tmp.benchmarks
-benchmark --report
+uv run benchmark --report
 
 # Rebuild from only selected prior runs
-benchmark 2026-07-05-12-00-00--gpt41-run 2026-07-05-13-00-00--sonnet-run --report
+uv run benchmark 2026-07-05-12-00-00--gpt41-run 2026-07-05-13-00-00--sonnet-run --report
 ```
 
 `leaderboard-report` still works too, but `benchmark --report` is the simpler repo-local entrypoint for rebuilding final reports from existing benchmark runs.
@@ -650,38 +705,38 @@ If you want to discard generated benchmark outputs before rebuilding a fresh fin
 
 ```text
 # Remove all benchmark result directories and generated leaderboard files
-benchmark --purge
+uv run benchmark --purge
 
 # Remove one specific benchmark run and regenerate reports later from the remaining runs
-benchmark 2026-07-05-12-00-00--my-run --purge
+uv run benchmark 2026-07-05-12-00-00--my-run --purge
 ```
 
-If you are not using the repo-local `.venv`, prefix those commands with `uv run` instead.
+If your shell resolves the direct entry point correctly, `benchmark.exe --purge` also works on Windows.
 
 ### Clean benchmark temp files
 
 Use purge mode to clear generated benchmark temp output under `tmp.benchmarks` before a fresh run:
 
 ```bash
-benchmark --purge
+uv run benchmark --purge
 ```
 
 You can also purge one specific run directory and keep the rest:
 
 ```bash
-benchmark 2026-07-05-12-00-00--my-run --purge
+uv run benchmark 2026-07-05-12-00-00--my-run --purge
 ```
 
 ### Generate stats for a specific benchmarking directory
 
 ```bash
-benchmark --stats tmp.benchmarks/YYYY-MM-DD-HH-MM-SS--a-helpful-name-for-this-run
+uv run benchmark --stats tmp.benchmarks/YYYY-MM-DD-HH-MM-SS--a-helpful-name-for-this-run
 ```
 
 Or summarize the most recent run automatically:
 
 ```bash
-benchmark --stats
+uv run benchmark --stats
 ```
 
 By default, this also writes a YAML summary file into the benchmark directory:
@@ -743,31 +798,36 @@ Provider-backed benchmark execution and language-specific unit-test toolchains a
 The same YAML report is also written when a benchmark run finishes normally, so you do not need
 to copy the console output by hand.
 
-For a local leaderboard-style HTML page plus CSV export across one or more benchmark runs:
+For a local leaderboard-style report export across one or more benchmark runs:
+
+Use `leaderboard.md` as the primary text report. Keep `leaderboard.html` for interactive browsing.
 
 ```text
-# Scan all runs under tmp.benchmarks and write tmp.benchmarks/leaderboard.csv + leaderboard.html + polyglot_leaderboard.yml
-leaderboard-report
+# Scan all runs under tmp.benchmarks and write tmp.benchmarks/leaderboard.md + leaderboard.html + polyglot_leaderboard.yml
+uv run leaderboard-report
 
 # Restrict the leaderboard to C# runs only
-leaderboard-report --stats-languages csharp
+uv run leaderboard-report --stats-languages csharp
 
 # Include only fully completed runs
-leaderboard-report --complete-only
+uv run leaderboard-report --complete-only
 ```
 
 The same aggregation flow is also available directly through `benchmark`:
 
 ```bash
 # Rebuild reports from every prior run
-benchmark --report
+uv run benchmark --report
 
 # Restrict rebuild to specific run directories
-benchmark run-a run-b --report
+uv run benchmark run-a run-b --report
 ```
 
 Open `tmp.benchmarks/leaderboard.html` in a browser to see a searchable, sortable table with
 percent-correct and cost bars inspired by the Aider leaderboard layout.
+
+If you prefer a text-friendly export that is easy to paste into notes, PRs, or chat, use
+`tmp.benchmarks/leaderboard.md`.
 
 The same exporter also writes `tmp.benchmarks/polyglot_leaderboard.yml`, which is closer to the
 multi-entry YAML format used by Aider's website data files under `aider/website/_data`.

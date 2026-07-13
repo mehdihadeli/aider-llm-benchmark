@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 import argparse
-import csv
 import json
 import os
 import re
@@ -437,6 +436,10 @@ def build_yaml_entries(directories, stats_languages=None, complete_only=False):
 
 def write_yaml(entries, output_path):
     output_path.parent.mkdir(parents=True, exist_ok=True)
+    if not entries:
+        output_path.write_text("[]\n", encoding="utf-8")
+        return
+
     lines = []
     for entry in entries:
         ordered_keys = [key for key in YAML_PREFERRED_FIELDS if key in entry]
@@ -452,53 +455,45 @@ def write_yaml(entries, output_path):
     output_path.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
 
 
-def write_csv(rows, output_path):
+def write_markdown(rows, output_path, title="LLM Coding Benchmark"):
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    fieldnames = [
-        "dirname",
-        "date",
-        "model",
-        "test_cases",
-        "pass_percent",
-        "pass_rate_1",
-        "pass_rate_2",
-        "pass_num_1",
-        "pass_num_2",
-        "total_cost",
-        "cost_per_case",
-        "seconds_per_case",
-        "completed_tests",
-        "total_tests",
-        "is_complete",
-        "percent_well_formed",
-        "error_outputs",
-        "num_malformed_responses",
-        "num_with_malformed_responses",
-        "user_asks",
-        "lazy_comments",
-        "syntax_errors",
-        "indentation_errors",
-        "exhausted_context_windows",
-        "prompt_tokens",
-        "completion_tokens",
-        "test_timeouts",
-        "edit_format",
-        "editor_model",
-        "editor_edit_format",
-        "reasoning_effort",
-        "thinking_tokens",
-        "command",
-        "commit_hash",
-        "versions",
-    ]
+    lines = [f"# {title}", ""]
 
-    extra_fields = sorted({key for row in rows for key in row if key not in fieldnames})
-    fieldnames.extend(extra_fields)
+    summary = build_summary(rows)
+    lines.extend(
+        [
+            "## Summary",
+            "",
+            f"- Models: {summary['total_models']}",
+            f"- Avg use cases per model: {summary['use_cases_per_model']:.1f} ({summary['use_cases_completion_rate']:.1f}% of available cases)",
+            f"- Avg successes per model: {summary['avg_successes_per_model']:.1f} ({summary['avg_success_rate']:.1f}%)",
+            f"- Avg failures per model: {summary['avg_failures_per_model']:.1f} ({summary['avg_failure_rate']:.1f}%)",
+            f"- Avg first-try successes per model: {summary['avg_first_try_successes']:.1f} ({summary['avg_first_try_success_rate']:.1f}%)",
+            f"- Avg second-try successes per model: {summary['avg_second_try_successes']:.1f} ({summary['avg_second_try_success_rate']:.1f}%)",
+            "",
+            "## Runs",
+            "",
+            "| Model | Run | % Correct | 1st Try | 2nd Try | Failure Rate | Test Cases | Total Cost | Avg Time |",
+            "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
+        ]
+    )
 
-    with output_path.open("w", newline="", encoding="utf-8") as handle:
-        writer = csv.DictWriter(handle, fieldnames=fieldnames)
-        writer.writeheader()
-        writer.writerows(rows)
+    for row in rows:
+        lines.append(
+            "| {model} | {dirname} | {pass_percent:.1f}% | {pass_rate_1:.1f}% | {last_pass_rate:.1f}% | {failed_rate:.1f}% | {test_cases} | ${total_cost:.4f} | {seconds_per_case:.1f}s |".format(
+                model=row.get("model") or "unknown",
+                dirname=row.get("dirname", ""),
+                pass_percent=float(row.get("pass_percent", 0) or 0),
+                pass_rate_1=float(row.get("pass_rate_1", 0) or 0),
+                last_pass_rate=float(row.get("last_pass_rate", 0) or 0),
+                failed_rate=float(row.get("failed_rate", 0) or 0),
+                test_cases=int(row.get("test_cases", 0) or 0),
+                total_cost=float(row.get("total_cost", 0) or 0),
+                seconds_per_case=float(row.get("seconds_per_case", 0) or 0),
+            )
+        )
+
+    output_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
 def percent_bar(value, css_class):
@@ -582,19 +577,40 @@ def build_detail_payload(row):
 def build_summary(rows):
     total_models = len(rows)
     total_test_cases = sum(int(row.get("test_cases", 0) or 0) for row in rows)
+    total_available_cases = sum(int(row.get("total_tests", 0) or 0) for row in rows)
     use_cases_per_model = (total_test_cases / total_models) if total_models else 0.0
-    avg_percent_correct = (
-        sum(float(row.get("pass_percent", 0) or 0) for row in rows) / total_models if total_models else 0.0
+    available_cases_per_model = (total_available_cases / total_models) if total_available_cases and total_models else use_cases_per_model
+    avg_successes_per_model = (
+        sum(int(row.get("test_cases", 0) or 0) - int(row.get("failed_num", 0) or 0) for row in rows) / total_models
+        if total_models
+        else 0.0
     )
-    avg_failure_rate = (
-        sum(float(row.get("failed_rate", 0) or 0) for row in rows) / total_models if total_models else 0.0
+    avg_failures_per_model = (
+        sum(int(row.get("failed_num", 0) or 0) for row in rows) / total_models if total_models else 0.0
     )
+    avg_first_try_successes = (
+        sum(int(row.get("pass_num_1", 0) or 0) for row in rows) / total_models if total_models else 0.0
+    )
+    avg_second_try_successes = (
+        sum(int(row.get("pass_num_2", 0) or 0) for row in rows) / total_models if total_models else 0.0
+    )
+
+    rate_denominator = use_cases_per_model if use_cases_per_model else 1.0
+    coverage_denominator = available_cases_per_model if available_cases_per_model else 1.0
     return {
         "total_models": total_models,
         "total_test_cases": total_test_cases,
         "use_cases_per_model": use_cases_per_model,
-        "avg_percent_correct": avg_percent_correct,
-        "avg_failure_rate": avg_failure_rate,
+        "available_cases_per_model": available_cases_per_model,
+        "use_cases_completion_rate": (use_cases_per_model / coverage_denominator) * 100 if total_models else 0.0,
+        "avg_successes_per_model": avg_successes_per_model,
+        "avg_success_rate": (avg_successes_per_model / rate_denominator) * 100 if total_models else 0.0,
+        "avg_failures_per_model": avg_failures_per_model,
+        "avg_failure_rate": (avg_failures_per_model / rate_denominator) * 100 if total_models else 0.0,
+        "avg_first_try_successes": avg_first_try_successes,
+        "avg_first_try_success_rate": (avg_first_try_successes / rate_denominator) * 100 if total_models else 0.0,
+        "avg_second_try_successes": avg_second_try_successes,
+        "avg_second_try_success_rate": (avg_second_try_successes / rate_denominator) * 100 if total_models else 0.0,
     }
 
 
@@ -677,7 +693,7 @@ def render_html(rows, output_path, title):
 
 def parse_args():
     parser = argparse.ArgumentParser(
-        description="Generate CSV and leaderboard-style HTML from benchmark result directories."
+        description="Generate Markdown, HTML, and YAML reports from benchmark result directories."
     )
     parser.add_argument("dirs", nargs="*", help="Benchmark directories to include")
     parser.add_argument(
@@ -690,14 +706,14 @@ def parse_args():
         help="Include only runs that completed every exercise in the selected scope",
     )
     parser.add_argument(
-        "--csv",
-        default=str(BENCHMARK_ROOT / "leaderboard.csv"),
-        help="CSV output path",
-    )
-    parser.add_argument(
         "--html",
         default=str(BENCHMARK_ROOT / "leaderboard.html"),
         help="HTML output path",
+    )
+    parser.add_argument(
+        "--md",
+        default=str(BENCHMARK_ROOT / "leaderboard.md"),
+        help="Markdown output path",
     )
     parser.add_argument(
         "--yaml",
@@ -734,7 +750,7 @@ def main():
     if not rows:
         raise SystemExit("No benchmark results found to export.")
 
-    csv_path = Path(args.csv)
+    md_path = Path(args.md)
     html_path = Path(args.html)
     yaml_path = Path(args.yaml)
     if yaml_entries is None:
@@ -743,11 +759,11 @@ def main():
             stats_languages=args.stats_languages,
             complete_only=args.complete_only,
         )
-    write_csv(rows, csv_path)
+    write_markdown(rows, md_path, args.title)
     render_html(rows, html_path, args.title)
     write_yaml(yaml_entries, yaml_path)
 
-    print(f"Wrote CSV: {csv_path}")
+    print(f"Wrote Markdown: {md_path}")
     print(f"Wrote HTML: {html_path}")
     print(f"Wrote YAML: {yaml_path}")
     print(f"Rows: {len(rows)}")

@@ -12,7 +12,9 @@ from unittest.mock import patch
 from typer.testing import CliRunner
 
 from aider_polyglot_benchmark.benchmark import (
+    _CANCEL_EVENT,
     BENCHMARK_REPORT_FILENAMES,
+    BenchmarkCancelled,
     app,
     cleanup_benchmark_artifacts,
     cleanup_test_output,
@@ -29,6 +31,7 @@ from aider_polyglot_benchmark.benchmark import (
     parse_languages,
     reset_shared_rate_limiters,
     resolve_model_parallelism,
+    remove_tree,
     run_with_rate_limit_retry,
     resolve_exercises_dir,
     resolve_llm_concurrency,
@@ -132,6 +135,44 @@ class TestCleanupBenchmarkArtifacts(unittest.TestCase):
             self.assertTrue(other_run_dir.exists())
             self.assertEqual([path.name for path in summary.removed_dirs], [run_dir.name])
 
+    def test_cleanup_benchmark_artifacts_skips_dir_when_delete_fails(self):
+        with TemporaryDirectory() as tmpdir:
+            benchmark_root = Path(tmpdir)
+            run_dir = benchmark_root / "2026-07-05-12-00-00--sample-run"
+            run_dir.mkdir()
+
+            with patch("aider_polyglot_benchmark.benchmark.remove_tree", side_effect=PermissionError):
+                summary = cleanup_benchmark_artifacts([run_dir], benchmark_root=benchmark_root)
+
+            self.assertTrue(run_dir.exists())
+            self.assertEqual(summary.removed_dirs, [])
+            self.assertEqual(summary.skipped_dirs, [run_dir])
+
+    def test_remove_tree_retries_after_permission_error(self):
+        with TemporaryDirectory() as tmpdir:
+            target = Path(tmpdir) / "2026-07-05-12-00-00--sample-run"
+            blocked_file = target / "bin" / "Debug" / "net10.0" / "Microsoft.Bcl.AsyncInterfaces.dll"
+            blocked_file.parent.mkdir(parents=True)
+            blocked_file.write_text("dll", encoding="utf-8")
+            retried_paths = []
+
+            def fake_rmtree(path, onerror):
+                def retry(path):
+                    retried_paths.append(path)
+
+                onerror(
+                    retry,
+                    blocked_file,
+                    (PermissionError, PermissionError("access denied"), None),
+                )
+
+            with patch("aider_polyglot_benchmark.benchmark.os.chmod") as chmod:
+                with patch("aider_polyglot_benchmark.benchmark.shutil.rmtree", fake_rmtree):
+                    remove_tree(target)
+
+            chmod.assert_called_once()
+            self.assertEqual(retried_paths, [blocked_file])
+
 
 class TestLocalVenvHelpers(unittest.TestCase):
     def test_find_local_venv_python_prefers_repo_venv_layout(self):
@@ -191,6 +232,7 @@ class TestLanguageTrackHelpers(unittest.TestCase):
 
 class TestRateLimitHelpers(unittest.TestCase):
     def tearDown(self):
+        _CANCEL_EVENT.clear()
         reset_shared_rate_limiters()
 
     def test_get_rate_limit_scope_groups_models_by_provider_prefix(self):
@@ -224,6 +266,13 @@ class TestRateLimitHelpers(unittest.TestCase):
         self.assertEqual(result, "ok")
         self.assertEqual(calls, ["call", "call"])
 
+    def test_run_with_rate_limit_retry_stops_when_cancelled(self):
+        limiter = get_shared_rate_limiter("github", 1, 0.0, 0.0)
+        _CANCEL_EVENT.set()
+
+        with self.assertRaises(BenchmarkCancelled):
+            run_with_rate_limit_retry(lambda: "ok", limiter, "github", 2)
+
     def test_resolve_llm_concurrency_defaults_to_safe_parallel_cap(self):
         self.assertEqual(resolve_llm_concurrency(1, None), 1)
         self.assertEqual(resolve_llm_concurrency(8, None), 2)
@@ -236,6 +285,9 @@ class TestRateLimitHelpers(unittest.TestCase):
 
 
 class TestMainCli(unittest.TestCase):
+    def tearDown(self):
+        _CANCEL_EVENT.clear()
+
     def test_main_requires_languages_for_benchmark_runs(self):
         result = RUNNER.invoke(app, ["sample-run", "--model", "github/gpt-4.1", "--unsafe"])
 
@@ -286,6 +338,58 @@ class TestMainCli(unittest.TestCase):
             self.assertEqual(result.exit_code, 0, result.stdout)
             self.assertEqual(run_model.call_count, 2)
             self.assertEqual(sorted(model for model, _ in called_models), ["github/gpt-4o", "openai/gpt-4o"])
+            write_reports.assert_called_once()
+
+    def test_main_parallel_keyboard_interrupt_shuts_down_executor_without_waiting(self):
+        with TemporaryDirectory() as tmpdir:
+            benchmark_root = Path(tmpdir) / "tmp.benchmarks"
+            benchmark_root.mkdir(parents=True)
+            exercises_root = Path(tmpdir) / "tracks"
+            (exercises_root / "csharp" / "exercises" / "practice" / "alpha").mkdir(parents=True)
+            env = {
+                "AIDER_BENCHMARK_DIR": str(benchmark_root),
+                "AIDER_DOCKER": "1",
+            }
+            shutdown_calls = []
+
+            class FakeFuture:
+                def result(self):
+                    raise KeyboardInterrupt()
+
+            class FakeExecutor:
+                def __init__(self, *args, **kwargs):
+                    pass
+
+                def submit(self, *args, **kwargs):
+                    return FakeFuture()
+
+                def shutdown(self, wait, cancel_futures):
+                    shutdown_calls.append((wait, cancel_futures))
+
+            with patch("aider_polyglot_benchmark.benchmark.ThreadPoolExecutor", FakeExecutor):
+                with patch("aider_polyglot_benchmark.benchmark.write_aggregate_reports") as write_reports:
+                    result = RUNNER.invoke(
+                        app,
+                        [
+                            "parallel-run",
+                            "--model",
+                            "github/gpt-4o",
+                            "--model",
+                            "openai/gpt-4o",
+                            "--model-parallelism",
+                            "2",
+                            "--languages",
+                            "csharp",
+                            "--no-aider",
+                            "--no-unit-tests",
+                            "--exercises-dir",
+                            str(exercises_root),
+                        ],
+                        env=env,
+                    )
+
+            self.assertEqual(result.exit_code, 2, result.stdout)
+            self.assertEqual(shutdown_calls, [(False, True)])
             write_reports.assert_called_once()
 
 

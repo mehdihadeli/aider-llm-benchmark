@@ -5,6 +5,8 @@ import os
 import random
 import re
 import shutil
+import signal
+import stat
 import subprocess
 import sys
 import threading
@@ -31,6 +33,33 @@ _RATE_LIMIT_PATTERNS = (
 _RATE_LIMITERS = {}
 _RATE_LIMITERS_LOCK = threading.Lock()
 _CANCEL_EVENT = threading.Event()
+
+
+class BenchmarkCancelled(Exception):
+    pass
+
+
+def raise_if_cancelled():
+    if _CANCEL_EVENT.is_set():
+        raise BenchmarkCancelled()
+
+
+def cancel_aware_sleep(seconds):
+    if seconds > 0:
+        _CANCEL_EVENT.wait(seconds)
+
+
+def _raise_keyboard_interrupt(signum, frame):
+    raise KeyboardInterrupt
+
+
+def install_interrupt_handlers():
+    if sys.platform == "win32" and hasattr(signal, "SIGBREAK"):
+        signal.signal(signal.SIGBREAK, _raise_keyboard_interrupt)
+
+
+def shutdown_executor(executor, cancelled):
+    executor.shutdown(wait=not cancelled, cancel_futures=cancelled)
 
 
 def find_local_venv_python(repo_root=REPO_ROOT):
@@ -91,6 +120,7 @@ except ImportError as exc:
 BENCHMARK_DNAME = Path(os.environ.get("AIDER_BENCHMARK_DIR", REPO_ROOT / "tmp.benchmarks"))
 BENCHMARK_REPORT_FILENAMES = (
     "leaderboard.csv",
+    "leaderboard.md",
     "leaderboard.html",
     "polyglot_leaderboard.yml",
 )
@@ -113,7 +143,7 @@ Modes:
 
 Outputs:
 - Per-run data lives under tmp.benchmarks/YYYY-MM-DD-HH-MM-SS--name
-- Aggregate reports are written to tmp.benchmarks/leaderboard.csv, leaderboard.html, and polyglot_leaderboard.yml
+- Aggregate reports are written to tmp.benchmarks/leaderboard.md, leaderboard.html, and polyglot_leaderboard.yml
 
 Model selection:
 - Pass any LiteLLM-supported model name with --model, for example openai/gpt-4o, anthropic/claude-sonnet-4, azure/my-deployment, github/gpt-4.1, gemini/gemini-2.5-flash, deepseek/deepseek-chat, or github_copilot/gpt-4
@@ -418,7 +448,9 @@ class SharedRateLimiter:
 
     def acquire(self):
         while True:
-            self.semaphore.acquire()
+            raise_if_cancelled()
+            if not self.semaphore.acquire(timeout=0.1):
+                continue
             wait_for = 0.0
             with self.lock:
                 now = time.monotonic()
@@ -429,7 +461,8 @@ class SharedRateLimiter:
                 return
 
             self.semaphore.release()
-            time.sleep(wait_for)
+            if _CANCEL_EVENT.wait(wait_for):
+                raise BenchmarkCancelled()
 
     def release(self):
         self.semaphore.release()
@@ -471,6 +504,7 @@ def run_with_rate_limit_retry(
 ):
     attempts = 0
     while True:
+        raise_if_cancelled()
         limiter.acquire()
         try:
             result = func()
@@ -564,25 +598,28 @@ def run_single_model_benchmark(
     )
 
 
-def write_aggregate_reports(dirnames=None, stats_languages=None):
+def write_aggregate_reports(dirnames=None, stats_languages=None, write_empty_yaml=False):
     from aider_polyglot_benchmark import leaderboard_report
 
     dirnames = leaderboard_report.find_benchmark_dirs(dirnames)
     rows = leaderboard_report.build_rows(dirnames, stats_languages=stats_languages)
+    yaml_path = leaderboard_report.BENCHMARK_ROOT / "polyglot_leaderboard.yml"
     if not rows:
         print("No benchmark results found to aggregate.")
+        if write_empty_yaml:
+            leaderboard_report.write_yaml([], yaml_path)
+            print(f"Wrote YAML: {yaml_path}")
         return
 
     yaml_entries = leaderboard_report.build_yaml_entries(dirnames, stats_languages=stats_languages)
-    csv_path = leaderboard_report.BENCHMARK_ROOT / "leaderboard.csv"
+    md_path = leaderboard_report.BENCHMARK_ROOT / "leaderboard.md"
     html_path = leaderboard_report.BENCHMARK_ROOT / "leaderboard.html"
-    yaml_path = leaderboard_report.BENCHMARK_ROOT / "polyglot_leaderboard.yml"
 
-    leaderboard_report.write_csv(rows, csv_path)
+    leaderboard_report.write_markdown(rows, md_path, "LLMs Benchmark Leaderboard")
     leaderboard_report.render_html(rows, html_path, "LLMs BenchmarkLLM Leaderboards")
     leaderboard_report.write_yaml(yaml_entries, yaml_path)
 
-    print(f"Wrote CSV: {csv_path}")
+    print(f"Wrote Markdown: {md_path}")
     print(f"Wrote HTML: {html_path}")
     print(f"Wrote YAML: {yaml_path}")
     print(f"Rows: {len(rows)}")
@@ -598,6 +635,19 @@ def _is_relative_to(path, parent):
         return True
     except ValueError:
         return False
+
+
+def _remove_readonly_and_retry(func, path, exc_info):
+    exc = exc_info[1]
+    if not isinstance(exc, PermissionError):
+        raise exc
+
+    os.chmod(path, stat.S_IWRITE | stat.S_IREAD)
+    func(path)
+
+
+def remove_tree(path):
+    shutil.rmtree(path, onerror=_remove_readonly_and_retry)
 
 
 def cleanup_benchmark_artifacts(dirnames=None, benchmark_root=BENCHMARK_DNAME):
@@ -636,7 +686,11 @@ def cleanup_benchmark_artifacts(dirnames=None, benchmark_root=BENCHMARK_DNAME):
             skipped_dirs.append(candidate)
             continue
 
-        shutil.rmtree(candidate)
+        try:
+            remove_tree(candidate)
+        except OSError:
+            skipped_dirs.append(candidate)
+            continue
         removed_dirs.append(candidate)
 
     return SimpleNamespace(
@@ -851,13 +905,16 @@ def run_benchmark_for_model(
                 summarize_results(dirname)
                 write_aggregate_reports_for_progress(dirname)
                 if sleep:
-                    time.sleep(sleep)
+                    cancel_aware_sleep(sleep)
         else:
             all_results = []
-            with ThreadPoolExecutor(max_workers=threads) as executor:
+            cancelled = False
+            executor = ThreadPoolExecutor(max_workers=threads)
+            try:
                 futures = []
                 for test_path in test_dnames:
                     if _CANCEL_EVENT.is_set():
+                        cancelled = True
                         break
                     future = executor.submit(
                         run_test,
@@ -886,16 +943,31 @@ def run_benchmark_for_model(
 
                 for future in futures:
                     if _CANCEL_EVENT.is_set():
-                        for pending in futures:
-                            pending.cancel()
+                        cancelled = True
                         break
                     try:
                         result = future.result()
                         all_results.append(result)
                         summarize_results(dirname)
                         write_aggregate_reports_for_progress(dirname)
+                    except BenchmarkCancelled:
+                        _CANCEL_EVENT.set()
+                        cancelled = True
+                        break
                     except Exception:
                         traceback.print_exc()
+            except KeyboardInterrupt:
+                _CANCEL_EVENT.set()
+                cancelled = True
+                raise
+            finally:
+                shutdown_executor(executor, cancelled or _CANCEL_EVENT.is_set())
+
+            if cancelled or _CANCEL_EVENT.is_set():
+                print("\n\nBenchmark cancelled for", model)
+                print("\n\n")
+                summarize_results(dirname)
+                return 2
     except KeyboardInterrupt:
         print("\n\nBenchmark cancelled for", model)
         _CANCEL_EVENT.set()
@@ -1025,6 +1097,7 @@ def main(
         help="Allow local execution outside docker after acknowledging that model-generated code will be run",
     ),
 ):
+    install_interrupt_handlers()
     commit_hash = get_commit_hash()
 
     if stats_only and not dirnames:
@@ -1036,14 +1109,14 @@ def main(
 
     if len(dirnames) > 1 and not (stats_only or diffs_only or report_only or purge):
         print("Only provide 1 dirname unless running with --stats, --diffs, --report or --purge")
-        return 1
+        raise typer.Exit(code=1)
 
     updated_dirnames = []
     for dirname in dirnames:
         dirname = Path(dirname)
         dirname = resolve_dirname(dirname, stats_only or cont or purge, make_new)
         if not dirname:
-            return 1
+            raise typer.Exit(code=1)
         updated_dirnames.append(dirname)
 
     if stats_only:
@@ -1063,7 +1136,7 @@ def main(
         for removed_file in cleanup_summary.removed_files:
             print(f"Removed aggregate report: {removed_file}")
         for skipped_dir in cleanup_summary.skipped_dirs:
-            print(f"Skipped missing path: {skipped_dir}")
+            print(f"Skipped benchmark path: {skipped_dir}")
         if not cleanup_summary.removed_dirs and not cleanup_summary.removed_files:
             print("No benchmark artifacts found to purge.")
         return 0
@@ -1089,13 +1162,14 @@ def main(
         run_dirnames = build_model_dirnames(dirname, model_names)
     except ValueError as exc:
         print(exc)
-        return 1
+        raise typer.Exit(code=1)
 
     llm_concurrency = resolve_llm_concurrency(threads, max_llm_concurrency)
     max_model_parallelism = resolve_model_parallelism(model_names, model_parallelism)
     model_runs = list(zip(model_names, run_dirnames))
 
     cancelled_models = set()
+    _CANCEL_EVENT.clear()
     try:
         if max_model_parallelism == 1 or len(model_runs) == 1:
             for model_name, run_dirname in model_runs:
@@ -1133,9 +1207,11 @@ def main(
                 if status == 2:
                     cancelled_models.add(model_name)
                 elif status:
-                    return status
+                    raise typer.Exit(code=status)
         else:
-            with ThreadPoolExecutor(max_workers=min(max_model_parallelism, len(model_runs))) as executor:
+            cancelled = False
+            executor = ThreadPoolExecutor(max_workers=min(max_model_parallelism, len(model_runs)))
+            try:
                 futures = {
                     executor.submit(
                         run_single_model_benchmark,
@@ -1172,21 +1248,42 @@ def main(
                 for future in futures:
                     if _CANCEL_EVENT.is_set():
                         cancelled_models.add(futures[future])
+                        cancelled = True
                         continue
-                    status = future.result()
+                    try:
+                        status = future.result()
+                    except BenchmarkCancelled:
+                        _CANCEL_EVENT.set()
+                        cancelled_models.add(futures[future])
+                        cancelled = True
+                        continue
                     if status == 2:
                         cancelled_models.add(futures[future])
+                        cancelled = True
                     elif status:
-                        return status
+                        raise typer.Exit(code=status)
+            except KeyboardInterrupt:
+                _CANCEL_EVENT.set()
+                cancelled = True
+                raise
+            finally:
+                shutdown_executor(executor, cancelled or _CANCEL_EVENT.is_set())
     except KeyboardInterrupt:
         print("\n\nBenchmark cancelled.")
         _CANCEL_EVENT.set()
+        cancelled_models.update(model_name for model_name, _ in model_runs)
 
     if cancelled_models:
         print(f"Cancelled models: {', '.join(sorted(cancelled_models))}")
     print("Writing aggregate reports for completed models...")
-    write_aggregate_reports(run_dirnames, stats_languages=languages)
-    return 0 if not cancelled_models else 2
+    write_aggregate_reports(
+        run_dirnames,
+        stats_languages=languages,
+        write_empty_yaml=bool(cancelled_models),
+    )
+    if cancelled_models:
+        raise typer.Exit(code=2)
+    return 0
 
 
 def show_diffs(dirnames):
@@ -1700,6 +1797,7 @@ def run_test_real(
     dur = 0
     test_outcomes = []
     for i in range(tries):
+        raise_if_cancelled()
         start = time.time()
 
         if no_aider:

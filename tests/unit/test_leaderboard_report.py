@@ -51,7 +51,14 @@ def test_render_html_uses_template_and_details_popup():
         assert "Correct edit format" in rendered
         assert "Solved First Try" in rendered
         assert "Solved Second Try" in rendered
-        assert "Use Cases Run" in rendered
+        assert "Avg Use Cases per Model" in rendered
+        assert "Avg Successes per Model" in rendered
+        assert "Avg Failures per Model" in rendered
+        assert "Avg First-Try Successes per Model" in rendered
+        assert "Avg Second-Try Successes per Model" in rendered
+        assert "% success rate" in rendered
+        assert "% failure rate" in rendered
+        assert "Use Cases Run" not in rendered
         assert "Failed Rate: 10.0%" in rendered
         assert "detail-row-0" in rendered
         assert "Pass rate 1" in rendered
@@ -63,22 +70,25 @@ def test_render_html_uses_template_and_details_popup():
         assert "detail-modal" not in rendered
 
 
-def test_write_csv_includes_additional_summary_fields():
+def test_write_markdown_renders_summary_and_rows():
     row = {
         "dirname": "2026-07-05-12-17-30--sample-run",
         "date": "2026-07-05",
         "model": "github/gpt-4.1",
-        "test_cases": 1,
-        "pass_percent": 100.0,
-        "pass_rate_1": 100.0,
-        "pass_num_1": 1,
-        "failed_rate": 0.0,
-        "failed_num": 0,
-        "total_cost": 0.01,
-        "cost_per_case": 0.01,
+        "test_cases": 10,
+        "pass_percent": 90.0,
+        "pass_rate_1": 70.0,
+        "pass_num_1": 7,
+        "pass_rate_2": 20.0,
+        "pass_num_2": 2,
+        "last_pass_rate": 20.0,
+        "failed_rate": 10.0,
+        "failed_num": 1,
+        "total_cost": 0.1234,
+        "cost_per_case": 0.0123,
         "seconds_per_case": 1.5,
-        "completed_tests": 1,
-        "total_tests": 1,
+        "completed_tests": 10,
+        "total_tests": 10,
         "is_complete": True,
         "percent_well_formed": 100.0,
         "error_outputs": 0,
@@ -100,21 +110,22 @@ def test_write_csv_includes_additional_summary_fields():
         "command": "aider --model github/gpt-4.1 --edit-format diff",
         "commit_hash": "abc1234",
         "versions": "",
-        "last_pass_index": 1,
-        "last_pass_rate": 100.0,
-        "last_pass_num": 1,
-        "failed_count": 0,
+        "last_pass_index": 2,
+        "last_pass_num": 2,
+        "failed_count": 1,
     }
 
     with TemporaryDirectory() as tmpdir:
-        output_path = Path(tmpdir) / "leaderboard.csv"
-        leaderboard_report.write_csv([row], output_path)
+        output_path = Path(tmpdir) / "leaderboard.md"
+        leaderboard_report.write_markdown([row], output_path, "Demo Leaderboard")
         rendered = output_path.read_text(encoding="utf-8")
 
-        assert "last_pass_index" in rendered
-        assert "last_pass_rate" in rendered
-        assert "last_pass_num" in rendered
-        assert "failed_count" in rendered
+        assert "# Demo Leaderboard" in rendered
+        assert "## Summary" in rendered
+        assert "## Runs" in rendered
+        assert "| Model | Run | % Correct |" in rendered
+        assert "github/gpt-4.1" in rendered
+        assert "$0.1234" in rendered
 
 
 def test_write_aggregate_reports_uses_all_runs_when_none_selected():
@@ -128,7 +139,7 @@ def test_write_aggregate_reports_uses_all_runs_when_none_selected():
         with patch.object(leaderboard_report, "BENCHMARK_ROOT", benchmark_root), \
              patch.object(leaderboard_report, "build_rows", return_value=[{"model": "github/gpt-4.1"}]) as build_rows, \
              patch.object(leaderboard_report, "build_yaml_entries", return_value=[{"model": "github/gpt-4.1"}]) as build_yaml_entries, \
-             patch.object(leaderboard_report, "write_csv") as write_csv, \
+               patch.object(leaderboard_report, "write_markdown") as write_markdown, \
              patch.object(leaderboard_report, "render_html") as render_html, \
              patch.object(leaderboard_report, "write_yaml") as write_yaml:
             write_aggregate_reports(None)
@@ -136,7 +147,7 @@ def test_write_aggregate_reports_uses_all_runs_when_none_selected():
         expected_dirs = [run_a, run_b]
         build_rows.assert_called_once_with(expected_dirs, stats_languages=None)
         build_yaml_entries.assert_called_once_with(expected_dirs, stats_languages=None)
-        write_csv.assert_called_once()
+        write_markdown.assert_called_once()
         render_html.assert_called_once()
         write_yaml.assert_called_once()
 
@@ -232,3 +243,36 @@ def test_summarize_dir_reports_task_pass_rates_and_failures_by_attempt():
     assert row["failed_num"] == 1
     assert row["failed_rate"] == 33.3
     assert row["failed_count"] == 1
+
+
+def test_build_summary_reports_average_per_model_counts():
+    rows = [
+        {
+            "test_cases": 10,
+            "failed_num": 2,
+            "pass_num_1": 6,
+            "pass_num_2": 2,
+        },
+        {
+            "test_cases": 6,
+            "failed_num": 1,
+            "pass_num_1": 4,
+            "pass_num_2": 1,
+        },
+    ]
+
+    summary = leaderboard_report.build_summary(rows)
+
+    assert summary["total_models"] == 2
+    assert summary["total_test_cases"] == 16
+    assert summary["use_cases_per_model"] == 8.0
+    assert summary["available_cases_per_model"] == 8.0
+    assert summary["use_cases_completion_rate"] == 100.0
+    assert summary["avg_successes_per_model"] == 6.5
+    assert summary["avg_failures_per_model"] == 1.5
+    assert summary["avg_first_try_successes"] == 5.0
+    assert summary["avg_second_try_successes"] == 1.5
+    assert summary["avg_success_rate"] == 81.25
+    assert summary["avg_failure_rate"] == 18.75
+    assert summary["avg_first_try_success_rate"] == 62.5
+    assert summary["avg_second_try_success_rate"] == 18.75
