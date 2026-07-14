@@ -98,9 +98,11 @@ Use that together with `--max-llm-concurrency` to keep request bursts below prov
 
 The benchmark now has 3 separate concurrency controls, and they affect different layers of the run:
 
-- `--threads`: how many exercise test cases can be active at once inside one model run.
-- `--model-parallelism`: how many selected models can run at once.
-- `--max-llm-concurrency`: how many in-flight LLM requests are allowed at once per provider scope such as `github`, `openai`, or `anthropic`.
+- `--threads`: how many exercise test cases can be active at once inside one model run. For good speed without immediately overloading a setup, start with `4`; try `6` when local test execution is not the bottleneck. On a strong machine with ample CPU and RAM, `12` to `15` threads per model can be reasonable after you confirm the local test toolchain remains stable.
+- `--model-parallelism`: how many selected models can run at once. Start with `2` for same-provider batches and `2` to `3` for mixed-provider batches when you want faster wall-clock completion.
+- `--max-llm-concurrency`: how many in-flight LLM requests are allowed at once per provider scope such as `github`, `openai`, or `anthropic`. This is the main knob for preventing rate limiting: start with `1`, raise to `2` only after stable runs with no `429` errors, and avoid going higher until quotas are proven. If you set `--threads 10` but `--max-llm-concurrency 3`, up to `10` exercise workers can still be active, but only `3` of them can be making live LLM calls at the same time. The other workers may still be doing local setup, running tests, parsing results, retry backoff, or waiting for their turn to call the provider. Higher `--threads` are still useful when those non-LLM phases overlap, but if model API latency is the main bottleneck then a low `--max-llm-concurrency` will cap most of the speedup.
+
+As a practical rule, strong machines can often handle around `10` to `15` threads per model, but that does not mean `10` to `15` simultaneous provider calls. Raise `--max-llm-concurrency` only as far as your provider can actually sustain.
 
 Report generation is now separated from those concurrency knobs:
 
@@ -118,6 +120,22 @@ In rough terms:
 
 - maximum active test cases is approximately `threads * model-parallelism`
 - maximum live LLM calls per provider is capped separately by `--max-llm-concurrency`
+
+Example high-throughput same-provider batch, assuming your OpenRouter account can safely sustain more than `10` concurrent requests:
+
+```bash
+uv run benchmark \
+  --model openrouter/openai/gpt-4.1 \
+  --model openrouter/openai/gpt-4o \
+  --model-parallelism 2 \
+  --threads 12 \
+  --max-llm-concurrency 12 \
+  --languages csharp \
+  --num-tests 100 \
+  --unsafe
+```
+
+In that example, up to `24` exercise workers can be active across the two model runs, while OpenRouter is allowed to serve up to `12` live requests at once for the shared `openrouter` provider scope. That means each model run can keep up to `12` exercises active, but the shared provider limiter still caps the total live OpenRouter request count at `12`.
 
 Default behavior is conservative:
 
@@ -612,7 +630,7 @@ skips any models that have not started yet.
 You can run `benchmark --help` or `uv run benchmark --help`. The help output now includes common workflows such as running a benchmark, comparing runs, collecting stats, and purging generated outputs. The most useful arguments are:
 
 - `--model` is the name of the model, same as you would pass directly to `aider`. Repeat it to benchmark multiple models in one command.
-- `--edit-format` is the name of the edit format, same as you would pass directly to `aider`. When working with an experimental LLM, I recommend starting with `whole`
+- `--edit-format` is the name of the edit format, same as you would pass directly to `aider`. Default is `diff` because it usually uses fewer tokens and is compatible with newer models. Override it when a specific model performs better with another format such as `whole`.
 - `--threads` specifies how many exercises to benchmark in parallel. Start with a single thread if you are working out the kinks on your benchmarking setup or working with a new model. Once you are getting reliable results, you can speed up the process by running with more threads.
 - `--num-tests` specifies how many of the tests to run before stopping. This is another way to start gently as you debug your benchmarking setup.
 - `--keywords` filters the tests to run to only the ones whose name match the supplied argument (similar to `pytest -k xxxx`).
@@ -787,6 +805,8 @@ Run only the integration suite:
 ```bash
 uv run pytest tests/integration -vv
 ```
+
+When benchmark exercises use Python test files, the harness runs them with `uv run pytest -q`.
 
 GitHub Actions also runs these suites separately on pushes to `main` and on pull requests, using
 independent `Unit Tests` and `Integration Tests` jobs for clearer failure reporting.

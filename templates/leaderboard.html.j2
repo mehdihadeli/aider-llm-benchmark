@@ -667,6 +667,10 @@
                           <div class="detail-stat-value">{{ row.model }}</div>
                         </div>
                         <div class="detail-stat">
+                          <div class="detail-stat-label">Correct Edit Format</div>
+                          <div class="detail-stat-value">{{ '%.1f'|format(row.reliable_replies) }}%</div>
+                        </div>
+                        <div class="detail-stat">
                           <div class="detail-stat-label">Edit Format</div>
                           <div class="detail-stat-value">{{ row.edit_format or '—' }}</div>
                         </div>
@@ -685,6 +689,10 @@
                         <div class="detail-stat">
                           <div class="detail-stat-label">Second Try Solved</div>
                           <div class="detail-stat-value">{{ '%.1f'|format(row.pass_after_retries) }}%</div>
+                        </div>
+                        <div class="detail-stat">
+                          <div class="detail-stat-label">Reliability</div>
+                          <div class="detail-stat-value">{{ '%.1f'|format(row.reliable_replies) }}%</div>
                         </div>
                       </div>
                     </section>

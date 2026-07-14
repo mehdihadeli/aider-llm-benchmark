@@ -330,9 +330,8 @@ def row_from_yaml_entry(entry):
     total_tests = int(entry.get("total_tests", test_cases) or test_cases)
     failed_num = int(entry.get("failed_num", entry.get("failure_num", 0)) or 0)
     failed_rate = float(entry.get("failed_rate", entry.get("failure_rate", 0)) or 0)
-    percent_well_formed = float(
-        entry.get("percent_well_formed", entry.get("percent_cases_well_formed", 0)) or 0
-    )
+    percent_well_formed_value = entry.get("percent_well_formed", entry.get("percent_cases_well_formed"))
+    percent_well_formed = float(percent_well_formed_value) if percent_well_formed_value is not None else 100.0
 
     row = {
         "dirname": str(entry.get("dirname", "") or ""),
@@ -538,6 +537,7 @@ def build_detail_payload(row):
     last_pass_index = get_last_pass_index(row)
     failed_count = int(row.get("failed_count", 0) or 0)
     complete_label = "Yes" if row["is_complete"] else f"No ({row['completed_tests']}/{row['total_tests']})"
+    correct_edit_format = float(row.get("percent_well_formed", 0) or 0)
     return {
         "model": row.get("model") or "unknown",
         "run": row.get("dirname", ""),
@@ -545,6 +545,7 @@ def build_detail_payload(row):
             {"label": "Dirname", "value": str(row.get("dirname", ""))},
             {"label": "Test cases", "value": str(row.get("test_cases", 0))},
             {"label": "Model", "value": str(row.get("model") or "")},
+            {"label": "Correct edit format", "value": f"{correct_edit_format:.1f}%"},
             {"label": "Edit format", "value": str(row.get("edit_format") or "")},
             {"label": "Commit hash", "value": str(row.get("commit_hash") or "")},
             {"label": "Reasoning effort", "value": str(row.get("reasoning_effort") or "")},

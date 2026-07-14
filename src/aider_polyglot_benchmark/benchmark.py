@@ -109,8 +109,9 @@ try:
     import typer
     from aider_polyglot_benchmark import leaderboard_report, prompts
     from dotenv import load_dotenv
-    from rich.console import Console
-    from rich.progress import BarColumn, Progress, SpinnerColumn, TextColumn, TimeElapsedColumn, TimeRemainingColumn
+    from rich.console import Console, Group
+    from rich.progress import BarColumn, Progress, ProgressColumn, SpinnerColumn, TextColumn, TimeElapsedColumn, TimeRemainingColumn
+    from rich.text import Text
 
     load_dotenv(override=True)
 
@@ -203,21 +204,44 @@ def benchmark_print(message="", style=None):
     BENCHMARK_CONSOLE.print(message, style=style)
 
 
+class BenchmarkBarColumn(ProgressColumn):
+    def __init__(self, bar_width=40):
+        super().__init__()
+        self.bar = BarColumn(
+            bar_width=bar_width,
+            style="grey35",
+            complete_style="cyan",
+            finished_style="green",
+            pulse_style="deep_sky_blue1",
+        )
+
+    def render(self, task):
+        color = task.fields.get("color", "cyan")
+        total = task.total or 0
+        completed = int(task.completed or 0)
+        total_value = int(total) if total else 0
+        percent = task.percentage or 0.0
+
+        top_line = self.bar.render(task)
+        bottom_line = Text(f"{percent:>3.0f}%  {completed}/{total_value}", style=color, justify="center")
+        return Group(top_line, bottom_line)
+
+
 def benchmark_status_color(status):
     normalized = (status or "").strip().lower()
     if not normalized:
-        return "bright_cyan"
+        return "cyan"
     if normalized == "complete" or normalized.startswith("done "):
         return "green"
     if "cancel" in normalized:
-        return "yellow"
+        return "dark_orange"
     if "error" in normalized or "fail" in normalized:
-        return "red"
+        return "magenta"
     if normalized == "idle" or normalized.startswith("queued ") or normalized.startswith("threads="):
-        return "bright_black"
+        return "grey58"
     if normalized.startswith("running "):
-        return "bright_cyan"
-    return "bright_cyan"
+        return "cyan"
+    return "cyan"
 
 
 def quiet_aider_io(io, verbose):
@@ -248,14 +272,8 @@ def write_text_atomic(path, content, encoding="utf-8"):
 def make_benchmark_progress():
     return Progress(
         SpinnerColumn(style="{task.fields[color]}"),
-        TextColumn("[bold {task.fields[color]}]{task.description}"),
-        BarColumn(
-            style="bright_cyan",
-            complete_style="bright_cyan",
-            finished_style="green",
-            pulse_style="bright_cyan",
-        ),
-        TextColumn("[{task.fields[color]}]{task.completed}/{task.total}"),
+        TextColumn("[bold {task.fields[color]}]{task.description}", justify="left"),
+        BenchmarkBarColumn(bar_width=40),
         TimeElapsedColumn(),
         TimeRemainingColumn(),
         TextColumn("[{task.fields[color]}]{task.fields[status]}"),
@@ -1615,7 +1633,12 @@ def main(
         "-l",
         help="Required for benchmark runs. Only run tests for specific languages (comma separated)",
     ),
-    edit_format: str = typer.Option(None, "--edit-format", "-e", help="Edit format"),
+    edit_format: str = typer.Option(
+        "diff",
+        "--edit-format",
+        "-e",
+        help="Edit format. Defaults to diff for lower token use and broad model compatibility",
+    ),
     editor_model: str = typer.Option(None, "--editor-model", help="Editor model name"),
     editor_edit_format: str = typer.Option(None, "--editor-edit-format", help="Editor edit format"),
     replay: str = typer.Option(
@@ -2622,6 +2645,7 @@ def run_unit_tests(original_dname, testdir, history_fname, test_files, verbose=F
         ".js": get_script_command("npm-test.sh"),
         ".cpp": get_script_command("cpp-test.sh"),
         ".cs": ["dotnet", "test", "--nologo", "--verbosity", "minimal"],
+        ".py": ["uv", "run", "pytest", "-q"],
     }
 
     # Get unique file extensions from test files

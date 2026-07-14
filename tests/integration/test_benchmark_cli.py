@@ -15,6 +15,8 @@ def test_benchmark_help_command_runs(run_cli):
     assert result.returncode == 0
     assert "Run benchmark, stats, diffs, or cleanup" in result.stdout
     assert "--languages" in result.stdout
+    assert "--edit-format" in result.stdout
+    assert "[default: diff]" in result.stdout
 
 
 def test_benchmark_requires_languages_in_real_command(run_cli):

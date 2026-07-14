@@ -49,6 +49,7 @@ def test_render_html_uses_template_and_details_popup():
         assert "Percent correct" in rendered
         assert "Test Case Cost" in rendered
         assert "Total Cost" in rendered
+        assert "Correct Edit Format" in rendered
         assert "Edit Format" in rendered
         assert "Solved First Try" in rendered
         assert "Solved Second Try" in rendered
@@ -63,6 +64,7 @@ def test_render_html_uses_template_and_details_popup():
         assert "Failed Rate: 10.0%" in rendered
         assert "detail-row-0" in rendered
         assert "Pass rate 1" in rendered
+        assert "Correct edit format" in rendered
         assert "Failed rate" in rendered
         assert "Failed num" in rendered
         assert "Test case cost" in rendered

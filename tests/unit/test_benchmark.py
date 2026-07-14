@@ -53,6 +53,7 @@ from aider_polyglot_benchmark.benchmark import (
     remove_tree_with_retries,
     resolve_report_mode,
     run_benchmark_for_model,
+    run_unit_tests,
     run_with_rate_limit_retry,
     stage_dir_for_cleanup,
     stage_dir_for_cleanup_with_retries,
@@ -72,6 +73,41 @@ class TestCleanupTestOutput(unittest.TestCase):
         output = "Ran 5 tests in 0.003s\nOK"
         expected = "\nOK"
         self.assertEqual(cleanup_test_output(output), expected)
+
+
+class TestRunUnitTests(unittest.TestCase):
+    def test_run_unit_tests_uses_uv_pytest_for_python_files(self):
+        with TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            original_dname = tmp_path / "source"
+            testdir = tmp_path / "work" / "python" / "exercises" / "practice" / "two-fer"
+            history_fname = testdir / ".aider.chat.history.md"
+            test_file = "two_fer_test.py"
+
+            source_test = original_dname / "python" / "exercises" / "practice" / "two-fer" / test_file
+            source_test.parent.mkdir(parents=True)
+            source_test.write_text("def test_ok():\n    assert True\n", encoding="utf-8")
+
+            testdir.mkdir(parents=True)
+
+            process = unittest.mock.Mock()
+            process.pid = 12345
+            process.communicate.return_value = ("", None)
+            process.returncode = 0
+
+            with patch("aider_polyglot_benchmark.benchmark.subprocess.Popen", return_value=process) as popen:
+                result = run_unit_tests(
+                    original_dname,
+                    testdir,
+                    history_fname,
+                    [test_file],
+                )
+
+            self.assertIsNone(result)
+            popen.assert_called_once()
+            self.assertEqual(popen.call_args.args[0], ["uv", "run", "pytest", "-q"])
+            self.assertTrue((testdir / test_file).exists())
+            self.assertIn("```\n\n```", history_fname.read_text(encoding="utf-8"))
 
         output = "OK"
         expected = "OK"
@@ -838,18 +874,18 @@ class TestThreadedProgress(unittest.TestCase):
             self.assertTrue(any((update.get("status") or "").startswith("running ") for update in worker_updates))
             self.assertTrue(any(update.get("visible") is False and update.get("status") == "idle" for update in worker_updates))
             self.assertTrue(any(update.get("status") == "complete" and update.get("color") == "green" for update in updated_tasks))
-            self.assertTrue(any((update.get("status") or "").startswith("running ") and update.get("color") == "blue" for update in worker_updates))
-            self.assertTrue(any(update.get("status") == "idle" and update.get("color") == "bright_black" for update in worker_updates))
+            self.assertTrue(any((update.get("status") or "").startswith("running ") and update.get("color") == "cyan" for update in worker_updates))
+            self.assertTrue(any(update.get("status") == "idle" and update.get("color") == "grey58" for update in worker_updates))
 
     def test_benchmark_status_color_maps_common_states(self):
-        self.assertEqual(benchmark_status_color("threads=3"), "bright_black")
-        self.assertEqual(benchmark_status_color("queued alpha"), "bright_black")
-        self.assertEqual(benchmark_status_color("idle"), "bright_black")
-        self.assertEqual(benchmark_status_color("running alpha"), "bright_cyan")
+        self.assertEqual(benchmark_status_color("threads=3"), "grey58")
+        self.assertEqual(benchmark_status_color("queued alpha"), "grey58")
+        self.assertEqual(benchmark_status_color("idle"), "grey58")
+        self.assertEqual(benchmark_status_color("running alpha"), "cyan")
         self.assertEqual(benchmark_status_color("done alpha"), "green")
         self.assertEqual(benchmark_status_color("complete"), "green")
-        self.assertEqual(benchmark_status_color("cancelled"), "yellow")
-        self.assertEqual(benchmark_status_color("error timeout"), "red")
+        self.assertEqual(benchmark_status_color("cancelled"), "dark_orange")
+        self.assertEqual(benchmark_status_color("error timeout"), "magenta")
 
     def test_quiet_output_redirects_stdout_only_when_not_verbose(self):
         stdout = io.StringIO()

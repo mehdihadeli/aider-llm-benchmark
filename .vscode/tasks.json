@@ -723,6 +723,52 @@
 			],
 			"isBackground": false,
 			"group": "test"
+		},
+		{
+			"label": "Validate benchmark help default edit format",
+			"type": "shell",
+			"command": "uv",
+			"args": [
+				"run",
+				"python",
+				"-m",
+				"pytest",
+				"-q",
+				"tests/integration/test_benchmark_cli.py",
+				"-k",
+				"benchmark_help_command_runs"
+			],
+			"isBackground": false,
+			"group": "test"
+		},
+		{
+			"label": "Inspect benchmark help output",
+			"type": "shell",
+			"command": "uv",
+			"args": [
+				"run",
+				"benchmark",
+				"--help"
+			],
+			"isBackground": false,
+			"group": "test"
+		},
+		{
+			"label": "Revalidate benchmark help default edit format",
+			"type": "shell",
+			"command": "uv",
+			"args": [
+				"run",
+				"python",
+				"-m",
+				"pytest",
+				"-q",
+				"tests/integration/test_benchmark_cli.py",
+				"-k",
+				"benchmark_help_command_runs"
+			],
+			"isBackground": false,
+			"group": "test"
 		}
 	]
 }
