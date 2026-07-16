@@ -2397,6 +2397,7 @@ def run_test_real(
     testdir = Path(testdir)
 
     history_fname = testdir / ".aider.chat.history.md"
+    results_fname = testdir / ".aider.results.json"
 
     res = load_existing_result(testdir, log_parse_error=True)
     if res is not None:
@@ -2690,6 +2691,7 @@ def run_test_real(
 
 def run_unit_tests(original_dname, testdir, history_fname, test_files, verbose=False):
     timeout = 60 * 3
+    poll_interval = 0.2
 
     # Map of file extensions to test commands
     TEST_COMMANDS = {
@@ -2738,10 +2740,27 @@ def run_unit_tests(original_dname, testdir, history_fname, test_files, verbose=F
     )
     register_tracked_process(process.pid)
     try:
-        stdout, _ = process.communicate(timeout=timeout)
+        deadline = time.monotonic() + timeout
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise subprocess.TimeoutExpired(command, timeout)
+            try:
+                stdout, _ = process.communicate(timeout=min(poll_interval, remaining))
+                break
+            except subprocess.TimeoutExpired:
+                if _CANCEL_EVENT.is_set():
+                    terminate_process_tree(process.pid, force=True)
+                    process.communicate()
+                    raise BenchmarkCancelled()
     except subprocess.TimeoutExpired:
         terminate_process_tree(process.pid, force=True)
         stdout, _ = process.communicate()
+        raise
+    except KeyboardInterrupt:
+        _CANCEL_EVENT.set()
+        terminate_process_tree(process.pid, force=True)
+        process.communicate()
         raise
     finally:
         unregister_tracked_process(process.pid)

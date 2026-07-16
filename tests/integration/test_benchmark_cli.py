@@ -1473,6 +1473,7 @@ def test_benchmark_ctrl_c_cancels_gracefully(tmp_path, start_cli, send_interrupt
             "ctrl-c-test",
             "--model",
             "github/gpt-4.1",
+            "--verbose",
             "--languages",
             "csharp",
             "--num-tests",

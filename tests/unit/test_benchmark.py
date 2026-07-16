@@ -147,6 +147,47 @@ AssertionError: 'OK' != 'OKx'
 """
         self.assertEqual(cleanup_test_output(output), expected)
 
+    def test_run_unit_tests_kills_process_when_cancelled(self):
+        with TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            original_dname = tmp_path / "source"
+            testdir = tmp_path / "work" / "csharp" / "exercises" / "practice" / "alpha"
+            history_fname = testdir / ".aider.chat.history.md"
+            test_file = "AlphaTests.cs"
+
+            source_test = original_dname / "csharp" / "exercises" / "practice" / "alpha" / test_file
+            source_test.parent.mkdir(parents=True)
+            source_test.write_text("// test\n", encoding="utf-8")
+            testdir.mkdir(parents=True)
+
+            process = unittest.mock.Mock()
+            process.pid = 23456
+            process.returncode = 1
+
+            timeout_error = subprocess.TimeoutExpired(cmd=["dotnet", "test"], timeout=0.2)
+
+            def fake_communicate(timeout=None):
+                if timeout is not None:
+                    _CANCEL_EVENT.set()
+                    raise timeout_error
+                return ("", None)
+
+            process.communicate.side_effect = fake_communicate
+
+            with patch("aider_polyglot_benchmark.benchmark.subprocess.Popen", return_value=process):
+                with patch("aider_polyglot_benchmark.benchmark.terminate_process_tree", return_value=True) as terminate:
+                    with self.assertRaises(BenchmarkCancelled):
+                        run_unit_tests(
+                            original_dname,
+                            testdir,
+                            history_fname,
+                            [test_file],
+                        )
+
+            terminate.assert_called_once_with(process.pid, force=True)
+            self.assertFalse(history_fname.exists())
+            _CANCEL_EVENT.clear()
+
 
 class TestCleanupBenchmarkArtifacts(unittest.TestCase):
     def test_cleanup_benchmark_artifacts_removes_reports_and_run_dirs(self):
