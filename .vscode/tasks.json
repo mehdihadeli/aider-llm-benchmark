@@ -769,6 +769,247 @@
 			],
 			"isBackground": false,
 			"group": "test"
+		},
+		{
+			"label": "Run all benchmark unit tests",
+			"type": "shell",
+			"command": "uv run python -m pytest -q tests/unit/test_benchmark.py",
+			"isBackground": false,
+			"group": "test"
+		},
+		{
+			"label": "Run resume integration test",
+			"type": "shell",
+			"command": "uv run python -m pytest -q tests/integration/test_benchmark_cli.py::test_benchmark_resumes_existing_run_and_skips_completed_exercises -v",
+			"isBackground": false,
+			"group": "test"
+		},
+		{
+			"label": "Run all benchmark CLI integration tests",
+			"type": "shell",
+			"command": "uv run python -m pytest -q tests/integration/test_benchmark_cli.py -v",
+			"isBackground": false,
+			"group": "test"
+		},
+		{
+			"label": "Run all benchmark unit tests",
+			"type": "shell",
+			"command": "uv run python -m pytest -q tests/unit/test_benchmark.py -v",
+			"isBackground": false,
+			"group": "test"
+		},
+		{
+			"label": "Run leaderboard report tests",
+			"type": "shell",
+			"command": "uv run python -m pytest -q tests/unit/test_leaderboard_report.py -v",
+			"isBackground": false,
+			"group": "test"
+		},
+		{
+			"label": "Show git diff",
+			"type": "shell",
+			"command": "git diff -- src/aider_polyglot_benchmark/benchmark.py tests/integration/test_benchmark_cli.py",
+			"isBackground": false,
+			"group": "test"
+		},
+		{
+			"label": "Show full git diff",
+			"type": "shell",
+			"command": "git diff -- src/aider_polyglot_benchmark/benchmark.py tests/integration/test_benchmark_cli.py | cat",
+			"isBackground": false,
+			"group": "test"
+		},
+		{
+			"label": "Check benchmark help",
+			"type": "shell",
+			"command": "uv run benchmark --help",
+			"isBackground": false,
+			"group": "test"
+		},
+		{
+			"label": "Run ruff check on changed files",
+			"type": "shell",
+			"command": "uv run ruff check src/aider_polyglot_benchmark/benchmark.py tests/integration/test_benchmark_cli.py",
+			"isBackground": false,
+			"group": "test"
+		},
+		{
+			"label": "Run resume integration test again",
+			"type": "shell",
+			"command": "uv run python -m pytest -q tests/integration/test_benchmark_cli.py::test_benchmark_resumes_existing_run_and_skips_completed_exercises -v",
+			"isBackground": false,
+			"group": "test"
+		},
+		{
+			"label": "Run idempotent default name integration test",
+			"type": "shell",
+			"command": "uv run python -m pytest -q tests/integration/test_benchmark_cli.py::test_benchmark_command_runs_real_offline_smoke_with_auto_clone -v",
+			"isBackground": false,
+			"group": "test"
+		},
+		{
+			"label": "Run default name idempotency integration test",
+			"type": "shell",
+			"command": "uv run python -m pytest -q tests/integration/test_benchmark_cli.py::test_benchmark_num_tests_limits_exercises -v",
+			"isBackground": false,
+			"group": "test"
+		},
+		{
+			"label": "Run unit tests after changes",
+			"type": "shell",
+			"command": "uv run python -m pytest -q tests/unit/test_benchmark.py tests/unit/test_leaderboard_report.py",
+			"isBackground": false,
+			"group": "test"
+		},
+		{
+			"label": "Run default name resume integration test",
+			"type": "shell",
+			"command": "uv run python -m pytest -q tests/integration/test_benchmark_cli.py::test_benchmark_default_run_name_resumes_prior_run -v",
+			"isBackground": false,
+			"group": "test"
+		},
+		{
+			"label": "Run all benchmark CLI integration tests",
+			"type": "shell",
+			"command": "uv run python -m pytest -q tests/integration/test_benchmark_cli.py -v",
+			"isBackground": false,
+			"group": "test"
+		},
+		{
+			"label": "Show full git diff after fixes",
+			"type": "shell",
+			"command": "git diff -- src/aider_polyglot_benchmark/benchmark.py tests/integration/test_benchmark_cli.py | cat",
+			"isBackground": false,
+			"group": "test"
+		},
+		{
+			"label": "Run leaderboard report unit tests",
+			"type": "shell",
+			"command": "uv run python -m pytest -q tests/unit/test_leaderboard_report.py -v",
+			"isBackground": false,
+			"group": "test"
+		},
+		{
+			"label": "Run all unit tests after report fix",
+			"type": "shell",
+			"command": "uv run python -m pytest -q tests/unit/test_benchmark.py tests/unit/test_leaderboard_report.py",
+			"isBackground": false,
+			"group": "test"
+		},
+		{
+			"label": "Run leaderboard unit tests after percent correct test",
+			"type": "shell",
+			"command": "uv run python -m pytest -q tests/unit/test_leaderboard_report.py -v",
+			"isBackground": false,
+			"group": "test"
+		},
+		{
+			"label": "Regenerate real leaderboard from existing run",
+			"type": "shell",
+			"command": "uv run benchmark --report",
+			"isBackground": false,
+			"group": "test"
+		},
+		{
+			"label": "Show git diff for report fix",
+			"type": "shell",
+			"command": "git diff -- src/aider_polyglot_benchmark/leaderboard_report.py tests/unit/test_leaderboard_report.py | cat",
+			"isBackground": false,
+			"group": "test"
+		},
+		{
+			"label": "Run benchmark unit tests after progress counter",
+			"type": "shell",
+			"command": "uv run python -m pytest -q tests/unit/test_benchmark.py -v",
+			"isBackground": false,
+			"group": "test"
+		},
+		{
+			"label": "Run benchmark unit tests after syntax fix",
+			"type": "shell",
+			"command": "uv run python -m pytest -q tests/unit/test_benchmark.py -v",
+			"isBackground": false,
+			"group": "test"
+		},
+		{
+			"label": "Run benchmark unit tests after test fix",
+			"type": "shell",
+			"command": "uv run python -m pytest -q tests/unit/test_benchmark.py -v",
+			"isBackground": false,
+			"group": "test"
+		},
+		{
+			"label": "Run benchmark unit tests after patching both tests",
+			"type": "shell",
+			"command": "uv run python -m pytest -q tests/unit/test_benchmark.py tests/unit/test_leaderboard_report.py",
+			"isBackground": false,
+			"group": "test"
+		},
+		{
+			"label": "Run integration tests after progress counter",
+			"type": "shell",
+			"command": "uv run python -m pytest -q tests/integration/test_benchmark_cli.py::test_benchmark_resumes_existing_run_and_skips_completed_exercises tests/integration/test_benchmark_cli.py::test_benchmark_default_run_name_resumes_prior_run -v",
+			"isBackground": false,
+			"group": "test"
+		},
+		{
+			"label": "Run unit and integration tests after add_benchmark_task fix",
+			"type": "shell",
+			"command": "uv run python -m pytest -q tests/unit/test_benchmark.py tests/unit/test_leaderboard_report.py tests/integration/test_benchmark_cli.py::test_benchmark_resumes_existing_run_and_skips_completed_exercises tests/integration/test_benchmark_cli.py::test_benchmark_default_run_name_resumes_prior_run",
+			"isBackground": false,
+			"group": "test"
+		},
+		{
+			"label": "Run unit and integration tests after add_benchmark_task fix v2",
+			"type": "shell",
+			"command": "uv run python -m pytest -q tests/unit/test_benchmark.py tests/unit/test_leaderboard_report.py tests/integration/test_benchmark_cli.py::test_benchmark_resumes_existing_run_and_skips_completed_exercises tests/integration/test_benchmark_cli.py::test_benchmark_default_run_name_resumes_prior_run",
+			"isBackground": false,
+			"group": "test"
+		},
+		{
+			"label": "Run unit and integration tests after column fix",
+			"type": "shell",
+			"command": "uv run python -m pytest -q tests/unit/test_benchmark.py tests/unit/test_leaderboard_report.py tests/integration/test_benchmark_cli.py::test_benchmark_resumes_existing_run_and_skips_completed_exercises tests/integration/test_benchmark_cli.py::test_benchmark_default_run_name_resumes_prior_run",
+			"isBackground": false,
+			"group": "test"
+		},
+		{
+			"label": "Show git diff for progress counter",
+			"type": "shell",
+			"command": "git diff -- src/aider_polyglot_benchmark/benchmark.py tests/unit/test_benchmark.py | cat",
+			"isBackground": false,
+			"group": "test"
+		},
+		{
+			"label": "Run leaderboard percent tests",
+			"type": "shell",
+			"command": "uv",
+			"args": [
+				"run",
+				"python",
+				"-m",
+				"pytest",
+				"-q",
+				"tests/unit/test_leaderboard_report.py"
+			],
+			"isBackground": false,
+			"group": "test"
+		},
+		{
+			"label": "Run benchmark report unit slice",
+			"type": "shell",
+			"command": "uv",
+			"args": [
+				"run",
+				"python",
+				"-m",
+				"pytest",
+				"-q",
+				"tests/unit/test_benchmark.py",
+				"tests/unit/test_leaderboard_report.py"
+			],
+			"isBackground": false,
+			"group": "test"
 		}
 	]
 }

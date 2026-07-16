@@ -77,6 +77,11 @@ def load_result_files(dirname, stats_languages=None):
     return results
 
 
+def compute_percent_correct(pass_rate_1, pass_rate_2, failed_rate):
+    percent_correct = float(pass_rate_1 or 0) + float(pass_rate_2 or 0) - float(failed_rate or 0)
+    return max(0.0, min(100.0, round(percent_correct, 1)))
+
+
 def summarize_dir(dirname, stats_languages=None):
     results = load_result_files(dirname, stats_languages=stats_languages)
     if not results:
@@ -148,10 +153,12 @@ def summarize_dir(dirname, stats_languages=None):
 
     percent_well_formed = round(100.0 * (1 - malformed_cases / completed_tests), 1)
     primary_pass_rate = pass_rates.get("pass_rate_1", 0.0)
+    secondary_pass_rate = pass_rates.get("pass_rate_2", 0.0)
     cost_per_case = total_cost / completed_tests if completed_tests else 0.0
     seconds_per_case = total_duration / completed_tests if completed_tests else 0.0
     failed_num = max(0, completed_tests - sum(solved_by_attempt[:2]))
     failed_rate = round(100.0 * failed_num / completed_tests, 1) if completed_tests else 0.0
+    percent_correct = compute_percent_correct(primary_pass_rate, secondary_pass_rate, failed_rate)
 
     model_name = ", ".join(sorted(variants["model"]))
     edit_format = ", ".join(sorted(variants["edit_format"]))
@@ -176,7 +183,7 @@ def summarize_dir(dirname, stats_languages=None):
         "editor_edit_format": ", ".join(sorted(variants["editor_edit_format"])),
         "reasoning_effort": ", ".join(sorted(variants["reasoning_effort"])),
         "thinking_tokens": ", ".join(sorted(variants["thinking_tokens"])),
-        "pass_percent": primary_pass_rate,
+        "pass_percent": percent_correct,
         "percent_well_formed": percent_well_formed,
         "failed_num": failed_num,
         "failed_rate": failed_rate,
@@ -312,6 +319,7 @@ def load_leaderboard_yaml(yaml_path):
 
 def row_from_yaml_entry(entry):
     pass_rate_1 = float(entry.get("pass_rate_1", 0) or 0)
+    pass_rate_2 = float(entry.get("pass_rate_2", 0) or 0)
     pass_num_1 = int(entry.get("pass_num_1", 0) or 0)
     indices = sorted(
         {
@@ -322,14 +330,10 @@ def row_from_yaml_entry(entry):
     )
     last_pass_index = max(indices, default=1)
     test_cases = int(entry.get("test_cases", entry.get("total_tests", 0)) or 0)
-    solved_total = sum(int(entry.get(f"pass_num_{index}", 0) or 0) for index in indices)
-    if solved_total and test_cases:
-        percent_correct = (solved_total / test_cases) * 100.0
-    else:
-        percent_correct = sum(float(entry.get(f"pass_rate_{index}", 0) or 0) for index in indices)
     total_tests = int(entry.get("total_tests", test_cases) or test_cases)
     failed_num = int(entry.get("failed_num", entry.get("failure_num", 0)) or 0)
     failed_rate = float(entry.get("failed_rate", entry.get("failure_rate", 0)) or 0)
+    percent_correct = compute_percent_correct(pass_rate_1, pass_rate_2, failed_rate)
     percent_well_formed_value = entry.get("percent_well_formed", entry.get("percent_cases_well_formed"))
     percent_well_formed = float(percent_well_formed_value) if percent_well_formed_value is not None else 100.0
 
@@ -348,7 +352,7 @@ def row_from_yaml_entry(entry):
         "editor_edit_format": str(entry.get("editor_edit_format", "") or ""),
         "reasoning_effort": str(entry.get("reasoning_effort", "") or ""),
         "thinking_tokens": str(entry.get("thinking_tokens", "") or ""),
-        "pass_percent": min(percent_correct, 100.0),
+        "pass_percent": percent_correct,
         "percent_well_formed": percent_well_formed,
         "failed_num": failed_num,
         "failed_rate": failed_rate,

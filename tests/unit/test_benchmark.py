@@ -735,40 +735,44 @@ class TestThreadedProgress(unittest.TestCase):
             alpha_dir.mkdir(parents=True)
             beta_dir.mkdir(parents=True)
 
+            def fake_add_task(description, total, status="queued", visible=True, color=None, **kwargs):
+                return 1
+
             with patch("aider_polyglot_benchmark.benchmark.random.shuffle", lambda items: None):
                 with patch("aider_polyglot_benchmark.benchmark.models.register_litellm_models", return_value=[]):
-                    with patch("aider_polyglot_benchmark.benchmark.run_test", return_value={"testcase": "alpha"}):
-                        with patch("aider_polyglot_benchmark.benchmark.refresh_progress_artifacts") as refresh:
-                            with patch("aider_polyglot_benchmark.benchmark.summarize_results"):
-                                status = run_benchmark_for_model(
-                                    run_dir,
-                                    "github_copilot/gpt-4",
-                                    0,
-                                    "csharp",
-                                    None,
-                                    None,
-                                    None,
-                                    None,
-                                    None,
-                                    False,
-                                    True,
-                                    True,
-                                    False,
-                                    1,
-                                    2,
-                                    2,
-                                    None,
-                                    None,
-                                    None,
-                                    None,
-                                    1,
-                                    0,
-                                    0.0,
-                                    0.0,
-                                    "end",
-                                    str(source_root),
-                                    "deadbee",
-                                )
+                    with patch("aider_polyglot_benchmark.benchmark.add_benchmark_task", side_effect=fake_add_task):
+                        with patch("aider_polyglot_benchmark.benchmark.run_test", return_value={"testcase": "alpha"}):
+                            with patch("aider_polyglot_benchmark.benchmark.refresh_progress_artifacts") as refresh:
+                                with patch("aider_polyglot_benchmark.benchmark.summarize_results"):
+                                    status = run_benchmark_for_model(
+                                        run_dir,
+                                        "github_copilot/gpt-4",
+                                        0,
+                                        "csharp",
+                                        None,
+                                        None,
+                                        None,
+                                        None,
+                                        None,
+                                        False,
+                                        True,
+                                        True,
+                                        False,
+                                        1,
+                                        2,
+                                        2,
+                                        None,
+                                        None,
+                                        None,
+                                        None,
+                                        1,
+                                        0,
+                                        0.0,
+                                        0.0,
+                                        "end",
+                                        str(source_root),
+                                        "deadbee",
+                                    )
 
             self.assertEqual(status, 0)
             refresh.assert_not_called()
@@ -787,7 +791,7 @@ class TestThreadedProgress(unittest.TestCase):
             updated_tasks = []
             next_task_id = 0
 
-            def fake_add_task(description, total, status="queued", visible=True, color=None):
+            def fake_add_task(description, total, status="queued", visible=True, color=None, **kwargs):
                 nonlocal next_task_id
                 next_task_id += 1
                 effective_color = color or benchmark_status_color(status)
@@ -799,6 +803,7 @@ class TestThreadedProgress(unittest.TestCase):
                         "status": status,
                         "visible": visible,
                         "color": effective_color,
+                        **kwargs,
                     }
                 )
                 return next_task_id
@@ -876,6 +881,106 @@ class TestThreadedProgress(unittest.TestCase):
             self.assertTrue(any(update.get("status") == "complete" and update.get("color") == "green" for update in updated_tasks))
             self.assertTrue(any((update.get("status") or "").startswith("running ") and update.get("color") == "cyan" for update in worker_updates))
             self.assertTrue(any(update.get("status") == "idle" and update.get("color") == "grey58" for update in worker_updates))
+
+    def test_run_benchmark_for_model_skips_completed_results_before_queueing(self):
+        with TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            source_root = tmp_path / "tracks"
+            run_dir = tmp_path / "tmp.benchmarks" / "2026-07-14-00-00-00--sample"
+            alpha_source = source_root / "csharp" / "exercises" / "practice" / "alpha"
+            beta_source = source_root / "csharp" / "exercises" / "practice" / "beta"
+            alpha_source.mkdir(parents=True)
+            beta_source.mkdir(parents=True)
+
+            alpha_run = run_dir / "csharp" / "exercises" / "practice" / "alpha"
+            beta_run = run_dir / "csharp" / "exercises" / "practice" / "beta"
+            alpha_run.mkdir(parents=True)
+            (alpha_run / ".aider.results.json").write_text(
+                json.dumps({"testcase": "alpha", "tests_outcomes": [True]}),
+                encoding="utf-8",
+            )
+
+            added_tasks = []
+            updated_tasks = []
+            run_calls = []
+
+            def fake_add_task(description, total, status="queued", visible=True, color=None, **kwargs):
+                added_tasks.append(
+                    {
+                        "description": description,
+                        "total": total,
+                        "status": status,
+                        "visible": visible,
+                        "color": color,
+                        **kwargs,
+                    }
+                )
+                return 1
+
+            def fake_update_task(task_id, advance=0, status=None, **kwargs):
+                updated_tasks.append(
+                    {
+                        "task_id": task_id,
+                        "advance": advance,
+                        "status": status,
+                        **kwargs,
+                    }
+                )
+
+            def fake_run_test(original_dname, testdir, *args, **kwargs):
+                run_calls.append(Path(testdir).name)
+                return {"testcase": Path(testdir).name}
+
+            with patch("aider_polyglot_benchmark.benchmark.random.shuffle", lambda items: None):
+                with patch("aider_polyglot_benchmark.benchmark.models.register_litellm_models", return_value=[]):
+                    with patch("aider_polyglot_benchmark.benchmark.add_benchmark_task", side_effect=fake_add_task):
+                        with patch("aider_polyglot_benchmark.benchmark.update_benchmark_task", side_effect=fake_update_task):
+                            with patch("aider_polyglot_benchmark.benchmark.run_test", side_effect=fake_run_test):
+                                with patch("aider_polyglot_benchmark.benchmark.summarize_results"):
+                                    status = run_benchmark_for_model(
+                                        run_dir,
+                                        "github_copilot/gpt-4",
+                                        0,
+                                        "csharp",
+                                        None,
+                                        None,
+                                        None,
+                                        None,
+                                        None,
+                                        False,
+                                        True,
+                                        True,
+                                        False,
+                                        1,
+                                        1,
+                                        2,
+                                        None,
+                                        None,
+                                        None,
+                                        None,
+                                        1,
+                                        0,
+                                        0.0,
+                                        0.0,
+                                        "end",
+                                        str(source_root),
+                                        "deadbee",
+                                    )
+
+            self.assertEqual(status, 0)
+            self.assertEqual(len(added_tasks), 1)
+            self.assertEqual(added_tasks[0]["total"], 2)
+            self.assertEqual(run_calls, ["beta"])
+            self.assertTrue(beta_run.exists())
+            self.assertFalse((beta_run / ".aider.results.json").exists())
+
+            skipped_update = next(
+                update for update in updated_tasks
+                if update.get("completed") == 1 and update.get("status") == "skipped 1 completed"
+            )
+            self.assertEqual(skipped_update["task_id"], 1)
+            self.assertTrue(any(update.get("status") == "running beta" for update in updated_tasks))
+            self.assertTrue(any(update.get("advance") == 1 and update.get("status") == "done beta" for update in updated_tasks))
 
     def test_benchmark_status_color_maps_common_states(self):
         self.assertEqual(benchmark_status_color("threads=3"), "grey58")

@@ -192,7 +192,7 @@ def test_load_leaderboard_yaml_and_convert_entry_to_row():
     assert row["pass_num_1"] == 3
     assert row["pass_num_2"] == 4
     assert row["failed_num"] == 3
-    assert row["pass_percent"] == 70.0
+    assert row["pass_percent"] == 40.0
 
 
 def test_row_from_yaml_entry_uses_pass_counts_for_percent_correct():
@@ -210,7 +210,7 @@ def test_row_from_yaml_entry_uses_pass_counts_for_percent_correct():
 
     row = leaderboard_report.row_from_yaml_entry(entry)
 
-    assert row["pass_percent"] == 80.0
+    assert row["pass_percent"] == 60.0
     assert row["percent_well_formed"] == 100.0
     assert row["is_complete"] is True
 
@@ -248,6 +248,7 @@ def test_summarize_dir_reports_task_pass_rates_and_failures_by_attempt():
     assert row["pass_rate_2"] == 33.3
     assert row["failed_num"] == 1
     assert row["failed_rate"] == 33.3
+    assert row["pass_percent"] == 33.3
     assert row["failed_count"] == 1
 
 

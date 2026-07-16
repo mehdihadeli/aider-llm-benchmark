@@ -109,9 +109,9 @@ try:
     import typer
     from aider_polyglot_benchmark import leaderboard_report, prompts
     from dotenv import load_dotenv
-    from rich.console import Console, Group
-    from rich.progress import BarColumn, Progress, ProgressColumn, SpinnerColumn, TextColumn, TimeElapsedColumn, TimeRemainingColumn
-    from rich.text import Text
+    from rich.console import Console
+    from rich.progress import BarColumn, Progress, ProgressColumn, TextColumn, TimeRemainingColumn
+    from rich.progress_bar import ProgressBar
 
     load_dotenv(override=True)
 
@@ -207,24 +207,21 @@ def benchmark_print(message="", style=None):
 class BenchmarkBarColumn(ProgressColumn):
     def __init__(self, bar_width=40):
         super().__init__()
-        self.bar = BarColumn(
-            bar_width=bar_width,
-            style="grey35",
-            complete_style="cyan",
-            finished_style="green",
-            pulse_style="deep_sky_blue1",
-        )
+        self.bar_width = bar_width
 
     def render(self, task):
         color = task.fields.get("color", "cyan")
-        total = task.total or 0
-        completed = int(task.completed or 0)
-        total_value = int(total) if total else 0
-        percent = task.percentage or 0.0
-
-        top_line = self.bar.render(task)
-        bottom_line = Text(f"{percent:>3.0f}%  {completed}/{total_value}", style=color, justify="center")
-        return Group(top_line, bottom_line)
+        return ProgressBar(
+            total=max(0, task.total) if task.total is not None else None,
+            completed=max(0, task.completed),
+            width=None if self.bar_width is None else max(1, self.bar_width),
+            pulse=not task.started,
+            animation_time=task.get_time(),
+            style="grey35",
+            complete_style=color,
+            finished_style="green",
+            pulse_style="deep_sky_blue1",
+        )
 
 
 def benchmark_status_color(status):
@@ -271,10 +268,10 @@ def write_text_atomic(path, content, encoding="utf-8"):
 
 def make_benchmark_progress():
     return Progress(
-        SpinnerColumn(style="{task.fields[color]}"),
         TextColumn("[bold {task.fields[color]}]{task.description}", justify="left"),
         BenchmarkBarColumn(bar_width=40),
-        TimeElapsedColumn(),
+        TextColumn("[{task.fields[color]}]{task.percentage:>3.0f}%", justify="right"),
+        TextColumn("[progress.remaining]•"),
         TimeRemainingColumn(),
         TextColumn("[{task.fields[color]}]{task.fields[status]}"),
         console=BENCHMARK_CONSOLE,
@@ -538,6 +535,16 @@ def resolve_dirname(dirname, use_single_prior, make_new, choose_latest_prior=Fal
 
     dirname = BENCHMARK_DNAME / dirname
     return dirname
+
+
+def choose_latest_prior_run_dirname(dirname, benchmark_root=BENCHMARK_DNAME):
+    benchmark_root = Path(benchmark_root)
+    if len(dirname.parts) > 1:
+        return dirname
+    priors = sorted(benchmark_root.glob(f"*--{dirname}"), key=lambda path: path.name)
+    if not priors:
+        return None
+    return priors[-1].name
 
 
 def normalize_models(model_names):
@@ -1318,6 +1325,19 @@ def copy_selected_exercise_dirs(source_root, destination_root, test_dnames):
         shutil.copytree(source_dir, destination_dir)
 
 
+def load_existing_result(testdir, log_parse_error=False):
+    results_fname = Path(testdir) / ".aider.results.json"
+    if not results_fname.exists():
+        return None
+
+    try:
+        return json.loads(results_fname.read_text())
+    except JSONDecodeError:
+        if log_parse_error:
+            print(f"{results_fname} failed to parse, redoing...")
+        return None
+
+
 def run_benchmark_for_model(
     dirname,
     model,
@@ -1412,6 +1432,28 @@ def run_benchmark_for_model(
         copy_selected_exercise_dirs(original_dname, dirname, test_dnames)
         if verbose:
             print("...done")
+    else:
+        missing_test_dnames = [
+            test_dname for test_dname in test_dnames
+            if not (dirname / test_dname).is_dir()
+        ]
+        if missing_test_dnames:
+            if verbose:
+                print(f"Copying {len(missing_test_dnames)} missing exercises to {dirname} ...")
+            copy_selected_exercise_dirs(original_dname, dirname, missing_test_dnames)
+            if verbose:
+                print("...done")
+
+    completed_test_dnames = [
+        test_dname for test_dname in test_dnames
+        if load_existing_result(dirname / test_dname) is not None
+    ]
+    completed_test_dnames = sorted(set(completed_test_dnames))
+    completed_test_dname_set = set(completed_test_dnames)
+    pending_test_dnames = [
+        test_dname for test_dname in test_dnames
+        if test_dname not in completed_test_dname_set
+    ]
 
     resource_metadata = importlib_resources.files("aider.resources").joinpath("model-metadata.json")
     model_metadata_files_loaded = models.register_litellm_models([resource_metadata])
@@ -1440,6 +1482,12 @@ def run_benchmark_for_model(
         total=len(test_dnames),
         status=f"threads={threads}",
     )
+    if completed_test_dnames:
+        update_benchmark_task(
+            progress_task,
+            completed=len(completed_test_dnames),
+            status=f"skipped {len(completed_test_dnames)} completed",
+        )
     worker_task_ids = []
     if threads > 1:
         model_label = model.rsplit("/", 1)[-1]
@@ -1458,7 +1506,7 @@ def run_benchmark_for_model(
     try:
         if threads == 1:
             all_results = []
-            for test_path in test_dnames:
+            for test_path in pending_test_dnames:
                 if _CANCEL_EVENT.is_set():
                     break
                 update_benchmark_task(progress_task, status=f"running {Path(test_path).name}")
@@ -1555,7 +1603,7 @@ def run_benchmark_for_model(
                         release_worker_slot(slot_index)
 
                 futures = {}
-                for test_path in test_dnames:
+                for test_path in pending_test_dnames:
                     if _CANCEL_EVENT.is_set():
                         cancelled = True
                         break
@@ -1653,7 +1701,7 @@ def main(
         False, "--clean", "-c", help="Replace an existing benchmark run directory with a fresh copy of the exercise set"
     ),
     cont: bool = typer.Option(
-        False, "--cont", help="Continue a previously created matching benchmark run directory"
+        False, "--cont", help="Resume a previously created matching benchmark run directory (default when reusing an existing run)"
     ),
     make_new: bool = typer.Option(False, "--new", help="Force creation of a new dated run directory"),
     no_unit_tests: bool = typer.Option(False, "--no-unit-tests", help="Do not run unit tests"),
@@ -1756,7 +1804,7 @@ def main(
         raise typer.Exit(code=1)
 
     reuse_named_run_dir = not (stats_only or diffs_only or report_only or purge or make_new)
-    reset_named_run_dir = reuse_named_run_dir and bool(dirnames) and not cont
+    reset_named_run_dir = reuse_named_run_dir and bool(dirnames) and clean
 
     updated_dirnames = []
     for dirname in dirnames:
@@ -1770,6 +1818,13 @@ def main(
         if not dirname:
             raise typer.Exit(code=1)
         updated_dirnames.append(dirname)
+
+    if not dirnames and reuse_named_run_dir:
+        default_name = build_default_run_name(normalize_models(model))
+        latest_prior = choose_latest_prior_run_dirname(Path(default_name))
+        if latest_prior:
+            print(f"Using pre-existing {latest_prior}")
+            updated_dirnames = [BENCHMARK_DNAME / latest_prior]
 
     if stats_only:
         return show_stats(updated_dirnames, stats_languages)
@@ -1832,7 +1887,9 @@ def main(
 
             assert len(updated_dirnames) == 1, updated_dirnames
             dirname = updated_dirnames[0]
-            run_dirnames = build_model_dirnames(dirname, model_names, use_base_dirname_for_first=not dirnames)
+            run_dirnames = build_model_dirnames(
+                dirname, model_names, use_base_dirname_for_first=not dirnames and len(model_names) == 1
+            )
     except ValueError as exc:
         print(exc)
         raise typer.Exit(code=1)
@@ -2341,16 +2398,12 @@ def run_test_real(
 
     history_fname = testdir / ".aider.chat.history.md"
 
-    results_fname = testdir / ".aider.results.json"
-    if results_fname.exists():
-        try:
-            res = json.loads(results_fname.read_text())
-            # if res.get("test_timeouts", 0) > 0:
-            #    print(f"{results_fname} test timeouts, redoing...")
-            # else:
-            return res
-        except JSONDecodeError:
-            print(f"{results_fname} failed to parse, redoing...")
+    res = load_existing_result(testdir, log_parse_error=True)
+    if res is not None:
+        # if res.get("test_timeouts", 0) > 0:
+        #    print(f"{results_fname} test timeouts, redoing...")
+        # else:
+        return res
 
     # Read solution and test files from config
     fnames = []

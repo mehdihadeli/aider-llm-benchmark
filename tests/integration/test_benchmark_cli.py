@@ -120,6 +120,132 @@ def test_benchmark_command_runs_real_offline_smoke_with_auto_clone(tmp_path, run
     assert not (run_dir / "csharp" / "exercises" / "practice" / "beta").exists()
 
 
+def test_benchmark_resumes_existing_run_and_skips_completed_exercises(
+    tmp_path, run_cli, init_track_repo
+):
+    source_parent = tmp_path / "source"
+    benchmark_root = tmp_path / "tmp.benchmarks"
+    tracks_root = tmp_path / "tracks"
+    init_track_repo(source_parent, "csharp", ["alpha", "beta"])
+
+    env = {
+        "AIDER_BENCHMARK_DIR": str(benchmark_root),
+        "EXERCISM_TRACK_REPO_BASE_URL": source_parent.as_uri(),
+    }
+
+    first = run_cli(
+        "benchmark",
+        [
+            "resume-smoke",
+            "--model",
+            "github/gpt-4.1",
+            "--languages",
+            "csharp",
+            "--keywords",
+            "alpha",
+            "--exercises-dir",
+            str(tracks_root),
+            "--unsafe",
+            "--no-aider",
+            "--no-unit-tests",
+        ],
+        env=env,
+    )
+    assert first.returncode == 0, first.stdout + first.stderr
+
+    run_dirs = [path for path in benchmark_root.iterdir() if path.is_dir()]
+    assert len(run_dirs) == 1
+    run_dir = run_dirs[0]
+    alpha_result = run_dir / "csharp" / "exercises" / "practice" / "alpha" / ".aider.results.json"
+    beta_result = run_dir / "csharp" / "exercises" / "practice" / "beta" / ".aider.results.json"
+    assert alpha_result.exists()
+    assert not beta_result.exists()
+
+    alpha_before = json.loads(alpha_result.read_text(encoding="utf-8"))
+
+    second = run_cli(
+        "benchmark",
+        [
+            "resume-smoke",
+            "--model",
+            "github/gpt-4.1",
+            "--languages",
+            "csharp",
+            "--exercises-dir",
+            str(tracks_root),
+            "--unsafe",
+            "--no-aider",
+            "--no-unit-tests",
+        ],
+        env=env,
+    )
+    assert second.returncode == 0, second.stdout + second.stderr
+
+    assert alpha_result.exists()
+    assert beta_result.exists()
+    alpha_after = json.loads(alpha_result.read_text(encoding="utf-8"))
+    assert alpha_after == alpha_before
+    assert (run_dir / "benchmark-report.yml").exists()
+
+
+def test_benchmark_default_run_name_resumes_prior_run(tmp_path, run_cli, init_track_repo):
+    source_parent = tmp_path / "source"
+    benchmark_root = tmp_path / "tmp.benchmarks"
+    tracks_root = tmp_path / "tracks"
+    init_track_repo(source_parent, "csharp", ["alpha", "beta"])
+
+    env = {
+        "AIDER_BENCHMARK_DIR": str(benchmark_root),
+        "EXERCISM_TRACK_REPO_BASE_URL": source_parent.as_uri(),
+    }
+
+    first = run_cli(
+        "benchmark",
+        [
+            "--model",
+            "github/gpt-4.1",
+            "--languages",
+            "csharp",
+            "--keywords",
+            "alpha",
+            "--exercises-dir",
+            str(tracks_root),
+            "--unsafe",
+            "--no-aider",
+            "--no-unit-tests",
+        ],
+        env=env,
+    )
+    assert first.returncode == 0, first.stdout + first.stderr
+
+    prior_dirs = [path for path in benchmark_root.iterdir() if path.is_dir()]
+    assert len(prior_dirs) == 1
+    prior_dir = prior_dirs[0]
+
+    second = run_cli(
+        "benchmark",
+        [
+            "--model",
+            "github/gpt-4.1",
+            "--languages",
+            "csharp",
+            "--exercises-dir",
+            str(tracks_root),
+            "--unsafe",
+            "--no-aider",
+            "--no-unit-tests",
+        ],
+        env=env,
+    )
+    assert second.returncode == 0, second.stdout + second.stderr
+
+    dirs_after = [path for path in benchmark_root.iterdir() if path.is_dir()]
+    assert len(dirs_after) == 1
+    assert dirs_after[0] == prior_dir
+    assert (prior_dir / "csharp" / "exercises" / "practice" / "beta" / ".aider.results.json").exists()
+    assert (prior_dir / "benchmark-report.yml").exists()
+
+
 def test_benchmark_multi_model_offline_smoke_generates_per_model_dirs_and_aggregates(
     tmp_path, run_cli, init_track_repo
 ):
