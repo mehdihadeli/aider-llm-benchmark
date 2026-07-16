@@ -1010,6 +1010,27 @@
 			],
 			"isBackground": false,
 			"group": "test"
+		},
+		{
+			"label": "Run full integration suite",
+			"type": "shell",
+			"command": "uv run python -m pytest tests/integration -vv",
+			"isBackground": false,
+			"group": "test"
+		},
+		{
+			"label": "Run progress refresh failing test",
+			"type": "shell",
+			"command": "uv run python -m pytest -q tests/integration/test_benchmark_cli.py::test_benchmark_progress_output_keeps_changing_during_slow_parallel_run -v",
+			"isBackground": false,
+			"group": "test"
+		},
+		{
+			"label": "Re-run full integration suite after progress fix",
+			"type": "shell",
+			"command": "uv run python -m pytest tests/integration -vv",
+			"isBackground": false,
+			"group": "test"
 		}
 	]
 }

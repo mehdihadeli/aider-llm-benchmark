@@ -307,13 +307,15 @@ def add_benchmark_task(description, total, status="queued", visible=True, color=
     with _BENCHMARK_PROGRESS_LOCK:
         if _BENCHMARK_PROGRESS is None:
             return None
-        return _BENCHMARK_PROGRESS.add_task(
+        task_id = _BENCHMARK_PROGRESS.add_task(
             description,
             total=total,
             status=status,
             visible=visible,
             color=color or benchmark_status_color(status),
         )
+        _BENCHMARK_PROGRESS.refresh()
+        return task_id
 
 
 def update_benchmark_task(task_id, advance=0, status=None, **kwargs):
@@ -326,6 +328,7 @@ def update_benchmark_task(task_id, advance=0, status=None, **kwargs):
             update_kwargs.setdefault("color", benchmark_status_color(status))
         update_kwargs.update(kwargs)
         _BENCHMARK_PROGRESS.update(task_id, **update_kwargs)
+        _BENCHMARK_PROGRESS.refresh()
 
 
 def find_latest_benchmark_dir():
