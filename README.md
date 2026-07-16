@@ -128,14 +128,14 @@ uv run benchmark \
   --model openrouter/openai/gpt-4.1 \
   --model openrouter/openai/gpt-4o \
   --model-parallelism 2 \
-  --threads 12 \
-  --max-llm-concurrency 12 \
+  --threads 10 \
+  --max-llm-concurrency 10 \
   --languages csharp \
   --num-tests 100 \
   --unsafe
 ```
 
-In that example, up to `24` exercise workers can be active across the two model runs, while OpenRouter is allowed to serve up to `12` live requests at once for the shared `openrouter` provider scope. That means each model run can keep up to `12` exercises active, but the shared provider limiter still caps the total live OpenRouter request count at `12`.
+In that example, up to `24` exercise workers can be active across the two model runs, while OpenRouter is allowed to serve up to `10` live requests at once for the shared `openrouter` provider scope. That means each model run can keep up to `10` exercises active, but the shared provider limiter still caps the total live OpenRouter request count at `10`.
 
 Default behavior is conservative:
 
